@@ -1,0 +1,162 @@
+/**
+ * Globals
+ */
+
+var keyString = "::"
+var keyRegExp = /\s*::\s*/
+
+
+
+/**
+ * App Module
+ */
+
+var app = (function(msl) {
+  // NSArray -> String
+  var switchState = function(group) {
+    var resultString = app.msg.success()
+    var groupName = [group name]
+    var nameParts = groupName.split(keyRegExp)
+    var layerIdToSetActive = nameParts[nameParts.length - 1]
+    var layers = [[group layers] array]
+
+    if (msl.isNSArrayExist(layers)) {
+      var layersWithKeyInName =
+        msl.getLayersWithSubstringInName(layers, keyString)
+
+      if (msl.isNSArrayExist(layersWithKeyInName)) {
+
+        if ([layersWithKeyInName count] >= 3) {
+          var layerWithActiveStyle =
+            msl.getLayerWithDistinctStyle(layersWithKeyInName)
+
+          if (layerWithActiveStyle) {
+            var layerToSetActive =
+              msl.getLayerByIdInName(layersWithKeyInName, layerIdToSetActive)
+
+            if (layerToSetActive) {
+              var styleActive = [layerWithActiveStyle style]
+              var styleRest = [layerToSetActive style]
+
+              [layerToSetActive setStyle:styleActive]
+              [layerWithActiveStyle setStyle:styleRest]
+            } else {
+              resultString = app.msg.noLayerWithId(groupName, layerIdToSetActive)
+            }
+          } else {
+            resultString = app.msg.noLayerWithActiveStyle(groupName)
+          }
+        } else {
+          resultString = app.msg.notEnoughLayers(groupName)
+        }
+      } else {
+        resultString = app.msg.noLayersWithKey(groupName)
+      }
+    } else {
+      resultString = app.msg.groupIsEmpty(groupName)
+    }
+
+    return resultString
+  }
+
+  // NSArray -> String
+  var init = function(selectedLayers) {
+    var resultString = app.msg.success()
+
+    if (msl.isNSArrayExist(selectedLayers)) {
+      var selectedGroups = msl.getGroupLayers(selectedLayers)
+
+      if (msl.isNSArrayExist(selectedGroups)) {
+        var selectedGroupsWithKeyInName =
+          msl.getLayersWithSubstringInName(selectedGroups, keyString)
+
+        if (msl.isNSArrayExist(selectedGroupsWithKeyInName)) {
+          var loopGroup = [selectedGroupsWithKeyInName objectEnumerator]
+          var msgArray = []
+
+          while (group = [loopGroup nextObject]) {
+            msgArray.push(switchState(group))
+          }
+
+          resultString = msgArray.join("  |  ")
+        } else {
+          resultString = app.msg.noGroupWithKey()
+        }
+      } else {
+        resultString = app.msg.noGroupSelected()
+      }
+    } else {
+      resultString = app.msg.noGroupSelected()
+    }
+
+    return resultString
+  }
+
+  return {
+    init : init
+  }
+})(msl)
+
+
+
+/**
+ * App Messaging Module
+ */
+
+app.msg = (function() {
+
+  var pluginNamePrefix = "State Machine"
+  var dividerString = " → "
+
+  var divider = function() { return dividerString }
+
+  var _makeMessage = function(msgText) {
+    return function(startStr, endStr) {
+      var startStr = startStr ? (startStr + dividerString) : ""
+      var endStr   = endStr ? (" " + endStr) : ""
+      return pluginNamePrefix + dividerString + startStr + msgText + endStr
+    }
+  }
+
+  var success         = _makeMessage("✔︎")
+  var noGroupSelected = _makeMessage("Select a layer group")
+  var noGroupWithKey  =
+        _makeMessage("Name a group like ‘Active" + keyString + "id’")
+  var groupIsEmpty    = _makeMessage("Group is empty")
+  var noLayersWithKey =
+        _makeMessage("No layers with ‘" + keyString + "’ in group")
+  var notEnoughLayers =
+        _makeMessage("Put inside at least 3 layers with ‘" + keyString + "’")
+  var noLayerWithActiveStyle =
+        _makeMessage("No layer with distinct style")
+  var noLayerWithId   = _makeMessage("No layer with id")
+  var somethingWrong  = _makeMessage("Something went wrong :(")
+
+  return {
+    divider                 : divider,
+    success                 : success,
+    noGroupSelected         : noGroupSelected,
+    noGroupWithKey          : noGroupWithKey,
+    groupIsEmpty            : groupIsEmpty,
+    noLayersWithKey         : noLayersWithKey,
+    notEnoughLayers         : notEnoughLayers,
+    noLayerWithActiveStyle  : noLayerWithActiveStyle,
+    noLayerWithId           : noLayerWithId,
+    somethingWrong          : somethingWrong
+  }
+})()
+
+
+
+/**
+ * Entry point
+ */
+
+var onRun = function(context) {
+  var doc       = context.document
+  var selection = context.selection
+
+  var resultString = app.init(selection)
+
+  [doc showMessage:resultString]
+}

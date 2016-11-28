@@ -1,0 +1,396 @@
+
+
+//
+//  Created by Emin İnanç Ünlü.
+//
+
+/* 
+The MIT License (MIT)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+
+//--------------------------------------
+// Global Variables
+//--------------------------------------
+
+
+var doc,
+	app = [NSApplication sharedApplication],
+	defaults = [NSUserDefaults standardUserDefaults],
+	kPluginDomain = "com.einancunlu.sketch-state-switch-master",
+	stateLayerNameKey = kPluginDomain + ".nameForStateLayer",
+	switchScopeKey = kPluginDomain + ".switchScope",
+	kLastUpdateCheckDayKey = kPluginDomain + ".lastUpdateCheckDayKey",
+	selection,
+	command,
+	scriptPath,	
+	scriptFolder
+
+
+//--------------------------------------
+// Menu Commands
+//--------------------------------------
+
+
+function setReferenceOrCreateStateLayer(context) {
+
+	doc = context.document
+	initCommand(context)
+	
+	var selectionCount = [selection count]
+	switch (true) {
+	case (selectionCount == 0):
+		[doc showMessage: "Oops, you need to select something!"]
+		return
+	case (selectionCount == 1):
+		break
+	case (selectionCount > 1):
+		[doc showMessage: "Select only one thing."]
+		return
+	}
+	
+	var selectedLayer = selection.objectAtIndex(0)
+	if (isChildOfStateGroup(selectedLayer)) {
+		// Generate state layer name and save for reuse
+		var stateLayerName = generateLayerNameToToggle(selection.objectAtIndex(0))
+		saveObjectToUserDefaults(stateLayerName, stateLayerNameKey)
+
+		[doc showMessage: "New reference: " + stateLayerName]
+	} else if ([selectedLayer class] === MSLayerGroup) {
+		if (isStateGroup(selectedLayer) ) {
+			[doc showMessage: "Select a layer inside of this group to create a reference."]
+			return
+		}
+		
+		// Load saved state layer name
+		var stateLayerName = [defaults objectForKey: stateLayerNameKey]
+		if (stateLayerName != nil) {
+			var layers = findLayersNamed_inContainer_filterByType(stateLayerName, selectedLayer)
+			var message = "Layer created: \"" + stateLayerName + "\""
+			var layerCount = [layers count]
+			
+			switch (true) {
+			case (layerCount > 1):
+				[doc showMessage: "Multiple state layer found!"]
+				return
+			case (layerCount == 1):
+               	// Delete existing state layer and resize selected group
+               	selectedLayer.removeLayer(layers[0])
+				if (getSketchVersionNumber() >= 350) {
+					selectedLayer.resizeToFitChildrenWithOption(1) 
+				} else {
+					selectedLayer.resizeRoot(true) 
+				}
+               	var message = "Layer updated: \"" + stateLayerName + "\""
+				break
+			}      
+			
+			// Create and add the state layer into the selected group
+			var stateLayer = selectedLayer.addLayerOfType("rectangle")
+			stateLayer.name = stateLayerName
+			[stateLayer setIsVisible: false]
+			[[stateLayer frame] setWidth: [[selectedLayer frame] width]]
+			[[stateLayer frame] setHeight: [[selectedLayer frame] height]]
+			[[stateLayer frame] setX: 0]
+			[[stateLayer frame] setY: 0]
+			[doc showMessage: message]            
+		} else {
+			[doc showMessage: "No reference is set. Firstly, you need to select a layer inside of a state group and run the 'Set Reference' command."]
+		}
+	} else {
+		[doc showMessage: "Select a group."]
+	}
+}
+
+function switchStates(context) {
+
+	doc = context.document
+	initCommand(context)
+
+	if ([selection count] == 0) {
+		[app displayDialog: "Oops, you need to select something!"]
+		return
+	}
+
+	// Toggle layers in the selected state groups
+	var notChildOfStateGroupError = false
+	for (var i = 0; i < [selection count]; i++) {
+		var selectedLayer = selection.objectAtIndex(i)
+		if (isChildOfStateGroup(selectedLayer)) {
+			toggleStateLayer(selectedLayer)
+		} else {
+			notChildOfStateGroupError = true
+		}
+	}
+	if (notChildOfStateGroupError) {
+		[app displayDialog: "One or more of the selected items wasn't child of a state group. Nothing is applied to these."]		
+	}
+}
+
+function changeScope(context) {
+	
+	doc = context.document
+	var selectedIndex = [defaults objectForKey: switchScopeKey] || 1
+	var comboBoxItems = ['All Pages', 'Current Page', 'Artboard']
+	selectedIndex++
+	selectedIndex = selectedIndex % 3
+	saveObjectToUserDefaults(selectedIndex, switchScopeKey)
+	[doc showMessage: "Scope: " + comboBoxItems[selectedIndex]]
+}
+
+
+//--------------------------------------
+// Helper Functions
+//--------------------------------------
+
+
+function initCommand(context) {
+	
+	doc = context.document
+	command = context.command 
+	selection = context.selection
+	scriptPath = context.scriptPath
+	scriptFolder = [scriptPath stringByDeletingLastPathComponent]
+	
+	if (isTodayNewDay() && checkPluginUpdate()) {
+		app.displayDialog_withTitle("Please redownload the plugin to install the new version.", "There is a new version of the plugin!")
+	}
+}
+
+function isTodayNewDay() {
+	
+	var lastUpdateCheckDay = [defaults objectForKey: kLastUpdateCheckDayKey]
+	
+	var formatter = [[NSDateFormatter alloc] init]
+	[formatter setDateStyle: NSDateFormatterShortStyle]
+	var today = [formatter stringFromDate: [NSDate date]]
+	saveObjectToUserDefaults(today, kLastUpdateCheckDayKey)
+	
+	if (lastUpdateCheckDay) {
+		return lastUpdateCheckDay != today
+	} else {
+		return true
+	}
+}
+
+function saveObjectToUserDefaults(object, key) {
+	
+	var configs  = [NSMutableDictionary dictionary]
+	[configs setObject: object forKey: key]
+	[defaults registerDefaults: configs]
+	[defaults synchronize]
+}
+
+function scanAllLayersToToggle(stateLayer, layerNameToToggle, isVisible) {
+	
+	var switchScope = [defaults objectForKey: switchScopeKey]
+	var container
+	switch (parseInt(switchScope)) {
+	case 0: // All Pages
+		container = nil
+		break
+	case 1: // Currpent Page
+		container = doc.currentPage()
+		break
+	case 2: // Current Artboard
+		container = artboardOfLayer(stateLayer)
+		break
+	default:
+		container = doc.currentPage()
+		saveObjectToUserDefaults(1, switchScopeKey)
+	}
+	
+	// Toggle layers
+	var layers = findLayersNamed_inContainer_filterByType(layerNameToToggle, container)
+    var loop = layers.objectEnumerator()
+	while (layer = loop.nextObject()) {
+		var parent = [layer parentGroup]
+		if (parent) {
+			[parent setIsVisible: isVisible]
+		}
+	}
+}
+
+function artboardOfLayer(layer) {
+	
+	var parent = [layer parentGroup]
+	if (parent) {
+		if ([parent class] === MSArtboardGroup) {
+			return parent
+		} else {
+			return artboardOfLayer(parent)
+		}
+	} else {
+		return nil
+	}
+}
+
+function toggleStateLayer(layer) {
+	
+	var parent = [layer parentGroup]
+	if (parent) {
+		var children = [parent layers]
+		for (var i = 0; i < [children count]; i++) {
+			var child = children.objectAtIndex(i)
+			var layerName = parent.name() + child.name()
+			[child setIsVisible: (child === layer)]
+			var layerNameToToggle = generateLayerNameToToggle(child)
+			var isVisible = child.isVisible()
+			scanAllLayersToToggle(layer, layerNameToToggle, isVisible)
+		}
+		[layer setIsVisible: true]
+		var layerNameToToggle = generateLayerNameToToggle(layer)
+		scanAllLayersToToggle(layer, layerNameToToggle, true)
+		
+		if ([parent class] === MSLayerGroup && isStateGroup(parent)) {
+			return
+		} else {
+			toggleStateLayer(parent)
+		}
+	} 
+}
+
+function isChildOfStateGroup(layer) {
+	
+	var parent = [layer parentGroup]
+	if (parent) {
+		if ([parent class] === MSLayerGroup && isStateGroup(parent)) {
+			return true
+		} else {
+			return isChildOfStateGroup(parent)
+		}
+	} else {
+		return false
+	}
+}
+
+function generateLayerNameToToggle(layer) {
+	
+	if (isStateGroup(layer)) {
+		return "S: " + layer.name().substring(8)
+	} else {
+		return generateLayerNameToToggle([layer parentGroup]) + " / " + layer.name()
+	}
+}
+
+function isStateGroup(layerGroup) {
+	
+	return layerGroup.name().substring(0, 8) == "State - "
+}
+
+var findLayersMatchingPredicate_inContainer_filterByType = function (predicate, container, layerType) {
+	
+    var scope
+    switch (layerType) {
+        case MSPage: 
+            scope = doc.pages()
+            return scope.filteredArrayUsingPredicate(predicate)
+        	break
+        case MSArtboardGroup:
+            if(typeof container !== 'undefined' && container != nil) {
+                if (container.className == "MSPage") {
+                    scope = container.artboards()
+                    return scope.filteredArrayUsingPredicate(predicate)
+                }
+            } else {
+                // Search all pages
+                var filteredArray = NSArray.array()
+                var loopPages = doc.pages().objectEnumerator(), page;
+                while (page = loopPages.nextObject()) {
+                    scope = page.artboards()
+                    filteredArray = filteredArray.arrayByAddingObjectsFromArray(scope.filteredArrayUsingPredicate(predicate))
+                }
+                return filteredArray
+            }
+        	break
+        default:
+            if(typeof container !== 'undefined' && container != nil) {
+                scope = container.children()
+                return scope.filteredArrayUsingPredicate(predicate)
+            } else {
+                // Search all pages
+                var filteredArray = NSArray.array()
+                var loopPages = doc.pages().objectEnumerator(), page;
+                while (page = loopPages.nextObject()) {
+                    scope = page.children()
+                    filteredArray = filteredArray.arrayByAddingObjectsFromArray(scope.filteredArrayUsingPredicate(predicate))
+                }
+                return filteredArray
+            }
+    }
+    return NSArray.array() // Return an empty array if no matches were found
+}
+
+var findLayersNamed_inContainer_filterByType = function (layerName, container, layerType) {
+	
+    var predicate = (typeof layerType === 'undefined' || layerType == nil) ? NSPredicate.predicateWithFormat("name == %@", layerName) : NSPredicate.predicateWithFormat("name == %@ && class == %@", layerName, layerType)
+    return findLayersMatchingPredicate_inContainer_filterByType(predicate, container)
+}
+
+function checkPluginUpdate() {
+
+	var manifestFilePath = scriptFolder + "/manifest.json"
+	var manifestJSON = getJSONFromFile(manifestFilePath)
+	var isThereNewVersion = false
+	try {
+		var response = getJSONFromURL('https://github.com/einancunlu/Sketch-State-Switch-Master/raw/master/State%20Switch%20Master.sketchplugin/Contents/Sketch/manifest.json')
+		if (response && response.version) {
+			if (response.version.toString() != manifestJSON.version.toString()) {
+				isThereNewVersion = true
+			}
+		}	
+	} catch (e) {
+		log(e)
+		return false
+	}
+	return isThereNewVersion
+}
+
+function getSketchVersionNumber() {
+	
+	const version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"]
+	var versionNumber = version.stringByReplacingOccurrencesOfString_withString(".", "") + ""
+	while(versionNumber.length != 3) {
+		versionNumber += "0"
+	}
+	return parseInt(versionNumber)
+}
+
+
+//--------------------------------------
+// JSON
+//--------------------------------------
+
+
+function getJSONFromFile(filePath) {
+	
+	var data = [NSData dataWithContentsOfFile: filePath]
+	return [NSJSONSerialization JSONObjectWithData: data options: 0 error: nil]
+}
+
+function getJSONFromURL(url) {
+	
+	var request = [NSURLRequest requestWithURL: [NSURL URLWithString:url]],
+		response = [NSURLConnection sendSynchronousRequest: request returningResponse: nil error: nil],
+		responseObj = [NSJSONSerialization JSONObjectWithData: response options: nil error: nil]
+	return responseObj
+}
+
