@@ -1,13 +1,21 @@
 a way to sync my sketch plugins between computers.
 
+## Sketch
+|||
+|---|---|
+|Presentation|cmd+.|
+|Export|cmd+shift+E|
+|Horizontal Distribute|cmd+control+H|
+|Vertical Distribute|cmd+control+V|
+
 ## Artboard Tools
 |||
 |---|---|
 |Arrange|cmd+control+1|
 |Group|control+alt+1|
 |Zoom|cmd+4|
-|Previous|cmd+control+[|
-|Next|cmd+control+]|
+|Previous|cmd+shift+[|
+|Next|cmd+shift+]|
 
 ## Distributor
 |||
