@@ -23,6 +23,11 @@ a way to sync my sketch plugins between computers.
 |Distribute...|control+alt+D|
 |Distribute again|control+alt+A|
 
+## Find and Replace
+|||
+|---|---|
+|Find and Replace|cmd+shift+F|
+
 ## Rename It
 |||
 |---|---|
