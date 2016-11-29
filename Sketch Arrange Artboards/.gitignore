@@ -1,4 +1,0 @@
-# Do not track any sketch files or screenflow files:
-*.sketch
-*.screenflow
-.DS_Store
