@@ -1,0 +1,158 @@
+/*
+* Align To plugin for Sketch.app
+* Author: Lucien Lee
+*/
+
+@import 'setting.cocoascript'
+
+var setting = loadSetting()
+
+function alignBottom(context){
+	align("bottom", context)
+}
+
+function alignTop(context){
+	align("top", context)
+}
+
+function alignLeft(context){
+	align("left", context)
+}
+
+function alignRight(context){
+	align("right", context)
+}
+
+function alignCenter(context){
+	align("center", context)
+}
+
+function alignHorizontalCenter(context){
+	align("horizontal center", context)
+}
+
+function alignVerticalCenter(context){
+	align("vertical center", context)
+}
+
+function align(direction, context){
+	var selection = context.selection,
+		doc = context.document,
+		selectedAmount = selection.count()
+
+	if(selectedAmount < 2) {
+	  [doc showMessage: "Please select 2 or more layers."]
+	} else {
+		var layers = []
+		for (var i=0; i < selectedAmount; i++){
+			layerName = selection[i].name()
+			layers.push(layerName)
+		}
+
+		if( setting == 'modal' ){
+			var choice = createSelect('Align ' + direction +' relative to', layers, 0)
+			// confirm
+			if( choice[0] == 1000 ){
+				alignLayer( selection, layers, direction, choice[1] )
+			}
+		}else if( setting == 'bottom' ){
+			alignLayer( selection, layers, direction, 0 )
+		}else if( setting == 'top' ){
+			alignLayer( selection, layers, direction, selectedAmount-1 )
+		}
+	}
+}
+
+function alignLayer(selection, layers, direction, index){
+
+	switch (direction){
+		case "left":
+			var getKeyPosition = function(keyFrame){
+				keyCoordinate = [keyFrame minX]
+			}
+			var alignObj = function(frame){
+				[frame setMinX:keyCoordinate]
+			}
+			break;
+		case "right":
+			var getKeyPosition = function(keyFrame){
+				keyCoordinate = [keyFrame maxX]
+			}
+			var alignObj = function(frame){
+				[frame setMaxX:keyCoordinate]
+			}
+			break;
+		case "top":
+			var getKeyPosition = function(keyFrame){
+				keyCoordinate = [keyFrame minY]
+			}
+			var alignObj = function(frame){
+				[frame setMinY:keyCoordinate]
+			}
+			break;
+		case "bottom":
+			var getKeyPosition = function(keyFrame){
+				keyCoordinate = [keyFrame maxY]
+			}
+			var alignObj = function(frame){
+				[frame setMaxY:keyCoordinate]
+			}
+			break;
+		case "vertical center":
+			var getKeyPosition = function(keyFrame){
+				keyCoordinate = [keyFrame midY]
+			}
+			var alignObj = function(frame){
+				[frame setMidY:keyCoordinate]
+			}
+			break;
+		case "horizontal center":
+			var getKeyPosition = function(keyFrame){
+				keyCoordinate = [keyFrame midX]
+			}
+			var alignObj = function(frame){
+				[frame setMidX:keyCoordinate]
+			}
+			break;
+		case "center":
+			var getKeyPosition = function(keyFrame) {
+				keyCoordinateX = [keyFrame midX]
+				keyCoordinateY = [keyFrame midY]
+			}
+			var alignObj = function(frame){
+				[frame setMidX:keyCoordinateX]
+				[frame setMidY:keyCoordinateY]
+			}
+			break;
+	}
+
+	var keyLayer = [selection objectAtIndex:index],
+		keyFrame = [keyLayer frame]
+
+	getKeyPosition(keyFrame)
+
+	for (var i = 0; i < layers.length; i++){
+	  	var layer = [selection objectAtIndex:i],
+	  		frame = [layer frame]
+
+	  	alignObj(frame)
+	}
+}
+
+function createSelect(msg, items, selectedItemIndex){
+	selectedItemIndex = selectedItemIndex || 0
+	var accessory = [[NSComboBox alloc] initWithFrame:NSMakeRect(0,0,200,25)]
+	[accessory addItemsWithObjectValues:items]
+	[accessory selectItemAtIndex:selectedItemIndex]
+
+	var alert = [[NSAlert alloc] init]
+	[alert setMessageText:msg]
+	[alert addButtonWithTitle:'OK']
+	[alert addButtonWithTitle:'Cancel']
+	[alert setAccessoryView:accessory]
+
+	var responseCode = [alert runModal]
+	var sel = [accessory indexOfSelectedItem]
+
+	return [responseCode, sel]
+}
