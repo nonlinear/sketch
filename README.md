@@ -11,13 +11,13 @@ a way to sync my sketch plugins between computers.
 ## [AlignTo](https://github.com/LucienLee/AlignTo)
 |||
 |---|---|
-|Align left|cmd+alt+control+l|
-|Align right|cmd+alt+control+r|
-|Align top|cmd+alt+control+t|
-|Align bottom|cmd+alt+control+b|
-|Align horizontal center|cmd+alt+control+h|
-|Align vertical center|cmd+alt+control+v|
-|Align vertical and horizontal center|cmd+alt+control+a|
+|left|cmd+alt+control+l|
+|right|cmd+alt+control+r|
+|top|cmd+alt+control+t|
+|bottom|cmd+alt+control+b|
+|horizontal center|cmd+alt+control+h|
+|vertical center|cmd+alt+control+v|
+|vertical and horizontal center|cmd+alt+control+a|
 
 ## [Artboard Tools](https://github.com/frankko/Artboard-Tools)
 |||
