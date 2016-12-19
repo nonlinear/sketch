@@ -8,7 +8,7 @@ a way to sync my sketch plugins between computers.
 |Horizontal Distribute|cmd+control+H|
 |Vertical Distribute|cmd+control+V|
 
-## Alignment
+## [AlignTo](https://github.com/LucienLee/AlignTo)
 |||
 |---|---|
 |Align left|cmd+alt+control+l|
@@ -19,7 +19,7 @@ a way to sync my sketch plugins between computers.
 |Align vertical center|cmd+alt+control+v|
 |Align vertical and horizontal center|cmd+alt+control+a|
 
-## Artboard Tools
+## [Artboard Tools](https://github.com/frankko/Artboard-Tools)
 |||
 |---|---|
 |Arrange|cmd+control+1|
