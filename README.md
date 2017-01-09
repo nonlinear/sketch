@@ -39,6 +39,15 @@ a way to sync my sketch plugins between computers.
 |---|---|
 |Find and Replace|cmd+shift+F|
 
+## [Pixel Perfecter](https://github.com/swiadek/pixel-perfecter-sketch-plugin)
+|||
+|---|---|
+|Select All Pixel Imperfect Layers|⌥⌘P|
+|Cycle thru Pixel Imperfect Layers|⌃⌥⌘P|
+
+! [Select All](https://github.com/swiadek/pixel-perfecter-sketch-plugin/raw/master/readme-all.gif)
+! [Cycle Thru](https://github.com/swiadek/pixel-perfecter-sketch-plugin/raw/master/readme-one.gif)
+
 ## Rename It
 |||
 |---|---|
