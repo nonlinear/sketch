@@ -1,0 +1,181 @@
+function sharpen(context, inputRadius, inputIntensity) {
+
+var doc = context.document;
+var selection = context.selection;
+
+if([selection count] == 0){
+var app = [NSApplication sharedApplication];
+[app displayDialog:"Please select at least one image layer"]
+}
+
+var inputR = inputRadius;
+var inputI = inputIntensity;
+if(inputR == 0.0 && inputI == 0.0)
+{
+	inputR = [doc askForUserInput:"Provide sharpen radius (px):" initialValue:0.4];
+	inputR = [inputR floatValue];
+	inputI = [doc askForUserInput:"Provide sharpen intensity (from 1.0 to 3.0):" initialValue:1.0];
+	inputI = [inputI floatValue];
+}
+
+var sketchVersion = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+
+for (var i=0; i<[selection count]; i++) {
+
+var layercur = selection[i];
+
+var currentopacity = [[[layercur style] contextSettings] opacity];
+
+[[[layercur style] contextSettings] setOpacity:1];
+
+// begin of shape image extraction block
+if(layercur.isKindOfClass(MSBitmapLayer))
+{
+
+	var img = [layercur image];
+
+	if ([sketchVersion floatValue] < 3.4 )
+	{
+		var imgdata = [layercur image];
+	}
+	else if([sketchVersion floatValue] >= 3.4 && [sketchVersion floatValue] < 3.5)
+	{
+		var imgdata = [img imageData];
+	}
+	else if([sketchVersion floatValue] >= 3.5)
+	{
+		var imgdata = img;
+	}
+	else if([sketchVersion floatValue] >= 3.7)
+	{
+		var imgdata = img;
+	}
+
+	var image2 = imgdata.image();
+}
+if(layercur.isKindOfClass(MSShapeGroup))
+{
+	if([sketchVersion floatValue] >= 3.4 )
+	{
+	var fillprev = layercur.style().fills().objectAtIndex(0);
+	var imgdata = [[fillprev image] imageData];
+	var image2 = imgdata.image();
+	}
+	else if([sketchVersion floatValue] < 3.4 )
+	{
+	var fillprev = layercur.style().fills().objectAtIndex(0);
+	var imgdata = [fillprev image];
+	var image2 = imgdata.image();
+	}
+}
+// end of shape image extraction block
+
+var size2 = image2.size();
+var rect2 = [layercur rect];
+var size4 = rect2;
+
+var smallimg = [[NSImage alloc] initWithSize: size4.size];
+[smallimg lockFocus];
+[image2 setSize: size4.size];
+[[NSGraphicsContext currentContext] setImageInterpolation:NSImageInterpolationHigh];
+[image2 drawAtPoint:NSZeroPoint fromRect:CGRectMake(0, 0, size4.size.width, size4.size.height)operation:NSCompositeCopy fraction:1.0];
+[smallimg unlockFocus];   
+[image2 setSize: size2];
+if(size4.size.width < size2.width)
+{
+//image is smaller than original image data
+var image = smallimg;
+}
+if(size4.size.width == size2.width)
+{
+//image has the same dimensions than original image data
+var image = image2;
+}
+if(size4.size.width == size2.width && smallimg != nil)
+{
+//image has the same dimensions than original image data
+var image = smallimg;
+}
+if(size4.size.width > size2.width)
+{
+//image is bigger than its original image data
+var image = image2;
+}
+
+if(layercur.isKindOfClass(MSShapeGroup))
+{var image = image2;}
+
+var tiffData = [image TIFFRepresentation];
+var bitmap = [NSBitmapImageRep imageRepWithData:tiffData];
+var ciimage = [[CIImage alloc] initWithBitmapImageRep:bitmap];
+
+var filter = [CIFilter filterWithName:"CIUnsharpMask"];
+[filter setValue:ciimage forKey:"inputImage"];
+[filter setValue:inputR forKey:"inputRadius"];
+[filter setValue:inputI forKey:"inputIntensity"];
+var output = filter.outputImage();
+var rep = [NSCIImageRep imageRepWithCIImage: output];
+var imagefinal = [[NSImage alloc] initWithSize:output.extent().size];
+[imagefinal addRepresentation:rep];
+
+if([sketchVersion floatValue] >= 3.7 )
+{
+	var fill = layercur.style().addStylePartOfType(0);
+} else {
+	var fill = layercur.style().fills().addNewStylePart();
+}
+
+fill.setFillType(4);
+
+if(layercur.isKindOfClass(MSShapeGroup))
+{
+//var prevfilltype = [fillprev fillType];
+var prevpatternfilltype = [fillprev patternFillType];
+var prevpatterntilescale = [fillprev patternTileScale];
+//[fill setFillType:prevfilltype];
+[fill setPatternFillType:prevpatternfilltype];
+
+} 
+else
+{
+[fill setPatternFillType:1];
+}
+
+if(layercur.isKindOfClass(MSBitmapLayer)){
+if(size4.size.width > size2.width)
+{
+[fill setPatternTileScale:size4.size.width/size2.width]
+} 
+else {
+[fill setPatternTileScale:1];
+}
+}
+
+if(layercur.isKindOfClass(MSShapeGroup))
+{
+[fill setPatternTileScale:prevpatterntilescale];
+}
+
+[fill setPatternImage:imagefinal];
+
+if ([sketchVersion floatValue] < 3.4 )
+{[[[layercur style] contextSettings] setOpacity:currentopacity];}
+else if([sketchVersion floatValue] >= 3.4 )
+{[[[layercur style] contextSettings] setOpacity:1];
+[fill setOpacity:currentopacity];}
+
+// if shape layer was processed then we need to place new fill higher
+if(layercur.isKindOfClass(MSShapeGroup))
+{
+[[[layercur style] fills] moveStylePartFromIndex:layercur.style().fills().count()-1 toIndex:1];	
+
+}
+else if(layercur.isKindOfClass(MSBitmapLayer)){
+[[[layercur style] fills] moveStylePartFromIndex:layercur.style().fills().count()-1 toIndex:0];
+}
+}
+if (selection.count() > 1)
+[doc showMessage:"Sharpen Images: Operation complete."+selection.count()+" layers processed."]
+else
+[doc showMessage:"Sharpen Images: Operation complete."+selection.count()+" layer processed."]
+};

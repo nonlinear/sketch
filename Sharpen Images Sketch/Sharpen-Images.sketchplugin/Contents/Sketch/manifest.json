@@ -1,0 +1,51 @@
+{
+  "author" : "Alexey Masalov",
+  "commands" : [
+    {
+      "script" : "script.cocoascript",
+      "handler" : "sharpenLight",
+      "shortcut" : "",
+      "name" : "1. Sharpen Light (0.4px / 1.0)",
+      "identifier" : "sharpen light"
+    },
+    {
+      "script" : "script.cocoascript",
+      "handler" : "sharpenMedium",
+      "shortcut" : "",
+      "name" : "2. Sharpen Medium (0.4px / 1.4)",
+      "identifier" : "sharpen medium",
+    },
+    {
+      "script" : "script.cocoascript",
+      "handler" : "sharpenHard",
+      "shortcut" : "",
+      "name" : "3. Sharpen Hard (0.4px / 1.8)",
+      "identifier" : "sharpen hard",
+    },
+    {
+      "script" : "script.cocoascript",
+      "handler" : "sharpenCustom",
+      "shortcut" : "",
+      "name" : "4. Custom Values...",
+      "identifier" : "sharpen custom",
+    },
+
+  ],
+  "menu" : {
+    "isRoot" : false,
+    "shortcut" : "",
+    "items" : [
+      "sharpen light",
+      "sharpen medium",
+      "sharpen hard",
+      "sharpen custom",
+    ],
+    "title" : "Sharpen Images"
+  },
+  "identifier" : "sharpenimages",
+  "version" : "1.0",
+  "description" : "Sharpen Images allows to apply Sharpen filter to your image layers in Sketch.",
+  "authorEmail" : "",
+  "compatibleVersion": "3.3.3",
+  "name" : "Sharpen Images"
+}

@@ -1,0 +1,17 @@
+@import "SharpenImages.cocoascript"
+
+function sharpenLight(context) {
+    sharpen(context, 0.4, 1.0);
+}
+
+function sharpenMedium(context) {
+   sharpen(context, 0.4, 1.4);
+}
+
+function sharpenHard(context) {
+ sharpen(context, 0.4, 1.8);
+}
+
+function sharpenCustom(context) {
+ sharpen(context, 0.0, 0.0);
+}
