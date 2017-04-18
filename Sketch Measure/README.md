@@ -1,62 +1,61 @@
+# A new feature for Sketch Measure: Export Layer's influence Rect to Spec.
+
+Layer's influence rect includes the area of shadows and outside borders, it's exactly the same size with the exported image.
+
+                                       Regular rect                                                           Influence rect
+​              
+![regular-rect](https://pic4.zhimg.com/v2-c1792b8300fca0cdc90b564a27b8da8b_b.png)
+![influence-rect](https://pic3.zhimg.com/v2-a639e906f8fea576da8d9a8cc1cc752a_b.png)
+
+Sometime, shadows will not implement by engineers, it should be a part of image. Designer need to show the influence rect to engineers, not the regular rect. This is the feature using for. 
+
+Just select the option in Export UI
+
+![export-ui](https://i1.hoopchina.com.cn/blogfile/201702/20/BbsImg148759897429137_471x602big.png)
+
 # Sketch Measure
 
-A measure tool for measurements & design specs, **Sketch 3.5+ support**. 
+Make it fun to create specs for developers and teammates. **Sketch 41.* support**.
 
-![Banner](http://utom.design/measure/256.png)
-## Change Log
-* Color name
-* Only Sketch 3.5+ support
-* Spec Export
-* New Interactive
-* Style Shared Support
+- [How to](http://utom.design/measure/how-to.html)
+- [中文说明](http://sketch.im/plugins/1)
+
+![Logo](http://utom.design/logo@2x.png)
 
 ## Installing Plugins
-### The conventional way:
-1. [Download the ZIP file with the Measure](https://github.com/utom/sketch-measure/archive/master.zip)
-2. Copy the contents to the plugin folder (Open up Sketch, and go to `Plugins` › `Reveal Plugins Folder…` to open it.)
+1. [Download the ZIP file](https://github.com/utom/sketch-measure/archive/master.zip) and unzip
+2. Open `Sketch Measure.sketchplugin`
 
-### The quickest way:
+## New UI
+Friendly user interface offers you a more intuitive way of making marks.
 
-_NOTE: If your Mac has not installed GitHub client, You need to install [GitHub for mac](https://mac.github.com)_
+### How to
+* Hold down the `Option` key on keyboard and click icons on the toolbar to show panels.
 
-1. Click on the [Clone in Desktop](github-mac://openRepo/https://github.com/utom/sketch-measure) button on GitHub
-2. Press `command` + `shift` + `g` to find plugin folder, then paste plugin folder path
+![SPEC EXPORT](http://utom.design/ui.png)
 
-**Plugin Folder Path**
+## Spec Export
+Automatically generate a html page with one click, and inspect all the design details including CSS Styles on it offline.
 
-* App Store `~/Library/Containers/com.bohemiancoding.sketch3/Data/Library/Application Support/com.bohemiancoding.sketch3/Plugins`
-* Beta `~/Library/Application Support/com.bohemiancoding.sketch3/Plugins`
+**If you want to create one artboard by one HTML file, please uncheck "Advanced mode".**
 
-## How-to
+Demo: http://utom.design/news/
 
-### 1. Create Overlay
-![1](http://ux.utom.us/tutorial/1.gif)
+![SPEC EXPORT](http://utom.design/export@2x.png)
 
-### 2. Measure Size
-![2](http://ux.utom.us/tutorial/2.gif)
+## Custom Shortcuts
+To create your own custom shortcuts, go to Keyboard in your System Preferences and click the Shortcuts tab. Select App Shortcuts and click ‘+’ to create a new shortcut. Choose Sketch from the Application list, then enter the exact name of the menu item you want to create the shortcut for. Finally choose your own shortcut combination and you’re all set.
 
-### 3. Measure Spacing
-![3](http://ux.utom.us/tutorial/3.gif)
+![Settings](http://sketchshortcuts.com/images/mac@2x.png)
 
-### 4. Get Property
-![5](http://ux.utom.us/tutorial/5.gif)
-
-### 5. Create Note
-![6](http://ux.utom.us/tutorial/6.gif)
-
-### Keyboard Shortcuts
-1. Create Overlay: `⌃` + `⇧` + `1`
-2. Measure Size: `⌃` + `⇧` + `2`
-3. Measure Spacing: `⌃` + `⇧` + `3`
-4. Get Property: `⌃` + `⇧` + `4`
-5. Create Note: `⌃` + `⇧` + `5`
-6. Spec Export: `⌃` + `⇧` + `E`
-7. Toggle All Measure Hidden `⌃` + `⇧` + `H`
-8. Toggle All Measure Locked `⌃` + `⇧` + `L`
-9. Reset(Clear) Artboard Measure
-
-### SPEC EXPORT (beta)
-http://utom.design/measure/spec-export-demo/
+##Contributors
+* Author [@utom](http://utom.design)
+* [@cute](http://liguangming.com) ([SketchI18N](https://github.com/cute/SketchI18N))
+* [@forestlin1212](https://github.com/forestlin1212)
+* [@ashung](https://github.com/Ashung) ([Automate-Sketch](https://github.com/Ashung/Automate-Sketch))
+* [@mkl87](https://github.com/mkl87), [@Skykai521](https://github.com/Skykai521), [@whyfind](https://github.com/whyfind) and [@Nora](https://www.behance.net/liyinuo)
+* @Kai and [@Zih-Hong](http://zihhonglin.com)
+* And [Other](https://github.com/utom/sketch-measure/contributors)
 
 ##Contact
 
