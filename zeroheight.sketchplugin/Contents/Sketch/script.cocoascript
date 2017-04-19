@@ -7,7 +7,7 @@ var onStartup = function(context) {
 
     // print a little message about which version is starting
     var version = context.plugin.version();
-    log('zeroheight ' + version + ' started 🐼');
+    log('zeroheight ' + version + ' started');
 
     // init the plugin
     if (loadFrameworks(context)) {
