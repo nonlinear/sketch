@@ -1,0 +1,24 @@
+function displayImageDragHelpDialog() {
+  displayAlert({
+    buttons: ['OK'],
+    optionToNotShowAgain: 'DragLayerHelp',
+    title: 'Adding Symbols to Document',
+    description: 'Along with adding the selected layer, Brand.ai will add two additional groups of symbols:\n\n1. Symbols that are nested inside that layer and all of their children.\n\n2. Symbols that are the same size as any of the nested symbols, and can be used as potential overrides.'
+  });
+}
+
+function displayUpdateDocumentDialog() {
+  var result = displayAlert({
+    buttons: ['OK', 'Cancel'],
+    optionToNotShowAgain: 'UpdateDocumentHelp',
+    title: 'Update Document',
+    description: 'Update styles and symbols in the document to their library version.\n\nNote: To import all symbols, styles and colors to the document, click "..."  and select Selective Sync from the menu.'
+  });
+
+  if (result == 1001){
+    //user canceled this operation
+    return false;
+  }
+
+  return true;
+}

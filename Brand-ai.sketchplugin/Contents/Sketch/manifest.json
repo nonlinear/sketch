@@ -1,0 +1,31 @@
+{
+  "name": "Brand.ai Sketch",
+  "version": "1.10.5",
+  "identifier": "ai.brand.sync",
+  "description": "Use your Brand.ai design library with Sketch.",
+  "author": "Brand.ai",
+  "compatibleVersion": "40.0",
+  "commands": [
+    {
+      "script": "brandai.cocoascript",
+      "handler": "display",
+      "shortcut": "cmd shift d",
+      "name": "Brand.ai",
+      "identifier": "brandai-display"
+    },
+    {
+      "script": "handle-selection.cocoascript",
+      "handlers": {
+        "actions": {
+          "SelectionChanged.finish": "onSelectionChanged"
+        }
+      }
+    }
+  ],
+  "menu": {
+    "isRoot": true,
+    "items": [
+      "brandai-display"
+    ]
+  }
+}

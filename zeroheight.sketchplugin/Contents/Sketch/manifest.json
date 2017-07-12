@@ -28,7 +28,8 @@
     ]
   },
   "identifier" : "com.zeroheight.sketch",
-  "version" : "1.4.1",
+  "version" : "1.5.4",
+  "appcast" : "https://api.sketchpacks.com/v1/plugins/com.zeroheight.sketch/appcast",
   "description" : "organise and share your design libraries in Sketch and web",
   "authorEmail" : "support@zeroheight.com",
   "name" : "zeroheight"

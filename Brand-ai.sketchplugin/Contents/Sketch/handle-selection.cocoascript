@@ -1,0 +1,25 @@
+@import 'persistence.js';
+@import 'debug.js';
+
+function postWebUIEvent(eventName, payload) {
+  var webView = persist.get('brandaiMainWebView');
+  if (webView) {
+    var data = JSON.stringify({ eventName: eventName, payload: payload });
+    var script = "window.brandai.handleEvent(" + data + ")";
+    webView.windowScriptObject().evaluateWebScript(script);
+  } else {
+    throw 'No WebView present. Event cannot be posted to the web UI.';
+  }
+}
+
+function onSelectionChanged(context) {
+  const action = context.actionContext;
+  const selection = action.newSelection;
+  const count = selection.count();
+
+  // todo: fix artboard selection count here
+  postWebUIEvent('onSelectionDidChange', {
+    selectedLayerCount: count,
+    selectedArtboardCount: count
+  });
+}

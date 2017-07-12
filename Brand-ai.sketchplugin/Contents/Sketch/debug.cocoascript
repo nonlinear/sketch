@@ -1,0 +1,7 @@
+var DEBUG = [[NSUserDefaults standardUserDefaults] boolForKey:'BrandAIDebug'];
+
+var debug = function(s) {
+  if (DEBUG) {
+    log(s);
+  }
+}

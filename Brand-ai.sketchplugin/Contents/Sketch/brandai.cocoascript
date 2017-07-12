@@ -1,0 +1,4536 @@
+@import 'version.js';
+@import 'helpers.js';
+@import 'nibui.js';
+@import 'default-colors.js';
+@import 'persistence.js';
+@import 'bitmapimporter.js';
+@import 'coerce.js';
+@import 'debug.cocoascript';
+@import 'menus.cocoascript';
+@import 'modals.cocoascript';
+
+const module = {};
+
+@import 'shared/constants.js'; const constants = module.exports;
+@import 'archive.js'; const archive = module.exports;
+
+
+const ImageReplaceResponse = {
+  Skip: 1,
+  Cancel: 2,
+  Replace: 3,
+  CreateNew: 4
+};
+
+var SKETCH_VERSION;
+var COSCRIPT;
+var JOBS = {};
+
+
+function display(context) {
+  // Check if the window is already open.
+  var app = NSApplication.sharedApplication();
+  var loadedWindow = $.find(app.windows(), function(window) {
+    return window.identifier() == 'brandai';
+  });
+  if (loadedWindow) {
+    if (loadedWindow.isVisible()) {
+      // Window is not expected to be released when closed, so
+      // close it only if its visible.
+      debug('Already open');
+      exit();
+    } else {
+      // Window is already present, but not visible, so just show it.
+      loadedWindow.makeKeyAndOrderFront(null);
+    }
+    return;
+  }
+
+  framework('WebKit');
+  debug('Launching...');
+  COSCRIPT = [COScript currentCOScript];
+  [COSCRIPT setShouldKeepAround:true];
+  var defaults = [NSUserDefaults standardUserDefaults];
+
+  // Get version number.
+  SKETCH_VERSION = NSBundle.mainBundle().infoDictionary()
+    .CFBundleShortVersionString.UTF8String();
+
+  // Get the plugin identifier.
+  IDENTIFIER = context.command.pluginBundle().identifier();
+
+  debug('Version ' + VERSION);
+
+  // Load nib.
+  debug('Loading nib...');
+  var outlets = [
+    'mainWindow',
+    'appControl',
+    'importExistingItemsButton',
+    'importProgressIndicator',
+    'mainWebView',
+    'progressSheet',
+    'progressIndicator',
+    'progressLabel',
+    'openSettingsMenu',
+    'moreActionsMenu',
+    'versionLabel',
+    'lastUpdatedLabel',
+    'replaceImageWindow',
+    'replaceImageReplaceButton',
+    'replaceImageCreateNewButton',
+    'replaceImageCancelButton',
+    'replaceImageSkipButton',
+    'replaceImageNewItemNameLabel',
+    'replaceImageNewItemWebView',
+    'replaceImageOldItemNameLabel',
+    'replaceImageOldItemWebView',
+    'addColorsSheet',
+    'addColorsWebView',
+    'addColorsCancelButton',
+    'addColorsAddButton',
+    'addTypeStylesSheet',
+    'addTypeStylesWebView',
+    'addTypeStylesCancelButton',
+    'addTypeStylesAddButton',
+    'addTypeStylesSelectAllCheckbox',
+    'addSharedStylesSheet',
+    'addSharedStylesWebView',
+    'addSharedStylesCancelButton',
+    'addSharedStylesAddButton',
+    'addSharedStylesSelectAllCheckbox',
+    'versionNameTextField',
+    'versionDescriptionTextField',
+    'createVersionButton',
+    'cancelVersionButton',
+    'createVersionSheet',
+    'learMoreAboutVersions',
+    'manageSymbolsSheet',
+    'manageSymbolsWebView',
+    'manageSymbolsCancelButton',
+    'manageSymbolsDeleteButton',
+    'selectiveSyncSheet',
+    'selectiveSyncWebView',
+    'selectiveSyncCancelButton',
+    'selectiveSyncImportButton'
+  ];
+  var nib = new NibUI(context, 'UIBundle', 'Main', outlets);
+
+  /* Set starting UI state.
+     ---------------------- */
+
+  // Original user preferred window height
+  var preferredWindowHeight = nib.mainWindow.frame().size.height;
+
+  // Set enabled state of controls.
+  nib.importExistingItemsButton.setEnabled(false);
+  nib.appControl.setEnabled(false);
+  nib.moreActionsMenu.setEnabled(false);
+
+  // Display version number.
+  [(nib.versionLabel) setStringValue:(VERSION)];
+
+  // Restore last section name.
+  var lastSelectedApp = defaults.stringForKey('BrandAISelectedApp') || 'Design Libraries';
+  var lastSelectedSection = defaults.stringForKey('BrandAISelectedSection') || 'Components';
+
+  //hide update and sync buttons in pages app
+  nib.importExistingItemsButton.setHidden(isPagesApp(lastSelectedApp));
+  nib.moreActionsMenu.setHidden(isPagesApp(lastSelectedApp));
+
+  // Save web view so we don’t have to pass it around.
+  persist.set('brandaiMainWebView', nib.mainWebView);
+
+
+  /* Connect UI actions.
+     ------------------- */
+
+  debug('Attaching actions');
+
+
+  nib.attachTargetAndAction(nib.importExistingItemsButton, function() {
+
+    var shouldImport = displayUpdateDocumentDialog();
+    if (shouldImport) {
+
+      importStyleData(context, nib, nib.importExistingItemsButton, true);
+    }
+  });
+
+  nib.attachTargetAndAction(nib.appControl, function() {
+    // Save selected section in the global varaible.
+    lastSelectedApp = nib.appControl.labelForSegment(nib.appControl.selectedSegment());
+    [defaults setObject:lastSelectedApp forKey:'BrandAISelectedApp'];
+
+    nib.importExistingItemsButton.setHidden(isPagesApp(lastSelectedApp));
+    nib.moreActionsMenu.setHidden(isPagesApp(lastSelectedApp));
+
+    // Display the user’s selection.
+    postWebUIEvent('onAppChanged', coerceString(lastSelectedApp));
+  });
+
+  nib.attachTargetAndAction(nib.addColorsCancelButton, function() {
+    nib.mainWindow.endSheet(nib.addColorsSheet);
+  });
+
+  nib.attachTargetAndAction(nib.addTypeStylesCancelButton, function() {
+    nib.mainWindow.endSheet(nib.addTypeStylesSheet);
+  });
+
+  nib.attachTargetAndAction(nib.addSharedStylesCancelButton, function() {
+    nib.mainWindow.endSheet(nib.addSharedStylesSheet);
+  });
+
+  nib.attachTargetAndAction(nib.manageSymbolsCancelButton, function() {
+    nib.mainWindow.endSheet(nib.manageSymbolsSheet);
+  });
+
+  nib.attachTargetAndAction(nib.selectiveSyncCancelButton, function() {
+    nib.mainWindow.endSheet(nib.selectiveSyncSheet);
+  });
+
+  nib.attachTargetAndAction(nib.cancelVersionButton, function(){
+    nib.mainWindow.endSheet(nib.createVersionSheet);
+  });
+
+
+  nib.attachTargetAndAction(nib.learMoreAboutVersions, function(){
+    NSWorkspace.sharedWorkspace().openURL(NSURL.URLWithString("https://blog.brand.ai/introducing-version-control-for-design-systems-d105796369bc"));
+  });
+
+  nib.attachTargetAndAction(nib.createVersionButton, function(){
+    const versionName = coerceString(nib.versionNameTextField.stringValue()).trim();
+    if (!versionName){
+      displayAlert({title: "Missing something?", description: 'Please provide a name for your version.'});
+      return;
+    }
+    const versionDescription = coerceString(nib.versionDescriptionTextField.string()).trim();
+    nib.mainWindow.endSheet(nib.createVersionSheet);
+    postWebUIEvent('onCreateNewVersion', {name: versionName, description: versionDescription});
+  });
+
+
+
+
+  /* Set up event handlers.
+     ---------------------- */
+  var nativeUIEventFunctions = {
+    getLayerData: function(payload) {
+      const layer = NSThread.mainThread()
+        .threadDictionary()['brandaiLayersByID']
+        .objectForKey(payload.layerID);
+
+      if (layer) {
+        var layerID = payload.layerID;
+        const document = MSDocument.currentDocument();
+
+        const svgData = payload.skipSVG? null : exportDataForArtboard(document, layer);
+        const svgDataURL = payload.skipSVG? null : dataURLFromData(svgData, 'image/svg+xml');
+
+        const pngData = payload.skipPNG? null : exportDataForArtboard(document, layer, 'png');
+        const pngDataURL = payload.skipPNG? null : dataURLFromData(pngData, 'image/png');
+
+        const jpgData = payload.skipJPG? null : exportDataForArtboard(document, layer, 'jpg');
+        const jpgDataURL = payload.skipJPG? null : dataURLFromData(jpgData, 'image/jpeg');
+
+        var archiveData;
+
+        // Actually upload a fresh instance if a master was the item to be
+        // uploaded. UNLESS it’s a symbol master dependency which has to be
+        // stored as a master or it’s useless.
+        if (layer.class() == 'MSSymbolMaster' && !payload.isSymbolMasterDependency) {
+          const instance = layer.newSymbolInstance();
+	        layerID = instance.objectID();
+          document.currentPage().addLayers([instance]);
+          archiveData = archive.archiveDataFromSketchObject(instance);
+          document.currentPage().removeLayer(instance);
+        } else {
+          archiveData = archive.archiveDataFromSketchObject(layer);
+        }
+        const archiveDataURL = dataURLFromData(archiveData, 'application/x-skla');
+
+        // Create a map of shared objects of all descendant
+        // text and shape layers that identify the Brand.ai
+        // ID of those objects.
+        const sharedObjectsMap = {};
+
+        const documentData = document.documentData();
+
+        const brandAITypeStyleIDsByTextStyleID =
+          getPreviouslyImportedSharedTextStylesMap(documentData);
+
+        const brandAISharedStyleIDsByLayerStyleID =
+          getPreviouslyImportedSharedLayerStylesMap(documentData);
+
+        traverseLayerTree(layer, function(descendant) {
+
+          if (descendant.className() == 'MSTextLayer') {
+            const sharedTextStyleID = descendant.style().sharedObjectID();
+            const textStyle = getSharedTextStyleByID(document, sharedTextStyleID);
+            if (textStyle) {
+              const brandAITypeStyleID = brandAITypeStyleIDsByTextStyleID[sharedTextStyleID];
+              if (brandAITypeStyleID) {
+                sharedObjectsMap[sharedTextStyleID] = brandAITypeStyleID;
+              }
+            }
+
+          } else if (descendant.className() == 'MSShapeGroup') {
+            const sharedLayerStyleID = descendant.style().sharedObjectID();
+            const layerStyle = getSharedLayerStyleByID(document, sharedLayerStyleID);
+            if (layerStyle) {
+              const brandAISharedStyleID = brandAISharedStyleIDsByLayerStyleID[sharedLayerStyleID];
+              if (brandAISharedStyleID) {
+                sharedObjectsMap[sharedLayerStyleID] = brandAISharedStyleID;
+              }
+            }
+          }
+        });
+
+
+        return {
+          svgDataURL: coerceJS(svgDataURL),
+          pngDataURL: coerceJS(pngDataURL),
+          jpgDataURL: coerceJS(jpgDataURL),
+          sklaDataURL: coerceJS(archiveDataURL),
+          symbolID: coerceJS(layer.symbolID && layer.symbolID()),
+          sharedObjects: coerceJS(sharedObjectsMap),
+          svgByteLength: payload.skipSVG? 0 : svgData.length(),
+          pngByteLength: payload.skipPNG? 0 : pngData.length(),
+          jpgByteLength: payload.skipJPG? 0 : jpgData.length(),
+          width: layer.frame().width(),
+          height: layer.frame().height(),
+          layerID: layerID
+        };
+      }
+    },
+
+    getSharedStyleArchiveData: function(id) {
+      const layerStyle = getSharedLayerStyleByID(MSDocument.currentDocument(), id);
+
+      if (layerStyle) {
+        const archiveData = archive.archiveDataFromSketchObject(layerStyle);
+        return dataURLFromData(archiveData, 'application/x-skla');
+      }
+    },
+
+    getSharedStylePreviewImageData: function(id) {
+      const layerStyle = getSharedLayerStyleByID(MSDocument.currentDocument(), id);
+
+      if (layerStyle) {
+        const pngData = thumbnailPNGDataForLayerStyle(layerStyle, 40, 40);
+        return dataURLFromData(pngData, 'image/png');
+      }
+    },
+
+    getDefaultsString: function(key) {
+      return coerceJS(
+        NSUserDefaults.standardUserDefaults().stringForKey(key)
+      );
+    },
+
+    displayAlert: function(args) {
+      return displayAlert(args);
+    }
+  };
+
+  var nativeUIEventHandlers = {
+    onDebug: function(msg) {
+      debug(msg);
+    },
+
+    // Delay posting the open window event until the web ui has finished
+    // loading.
+    onWebUIDidFinishLoading: function() {
+      debug('web UI has loaded');
+
+      // Set elastic scrolling for web view. Feels more like native UI.
+      var scrollView = nib.mainWebView.mainFrame().frameView()
+        .documentView().enclosingScrollView();
+      scrollView.setVerticalScrollElasticity(NSScrollElasticityAutomatic);
+      scrollView.setHorizontalScrollElasticity(NSScrollElasticityAutomatic);
+
+      const pluginVersionReportedBySketch =
+        'v' + context.command.pluginBundle().version();
+      const needsRestart = pluginVersionReportedBySketch != VERSION;
+      var updateReadyToInstall = false;
+
+      if (!needsRestart) {
+        const updateInfo = defaults.dictionaryForKey('BrandAIUpdate');
+        if (updateInfo && NSFileManager.defaultManager().fileExistsAtPath(updateInfo.filePath)) {
+          updateReadyToInstall = coerceJS(updateInfo);
+        }
+      }
+
+      var idToken = defaults.stringForKey('BrandAIIdKey');
+      var styleguideId = defaults.stringForKey('BrandAIStyleguideId');
+      var apiURL = defaults.stringForKey('BrandAIApiURL');
+
+      var layerCounts = getSelectedLayerCount();
+      postWebUIEvent('onLaunchPlugin', {
+        idToken: coerceString(idToken),
+        styleguideId: coerceString(styleguideId),
+        currentApp: coerceString(lastSelectedApp),
+        currentSection: coerceString(lastSelectedSection),
+        pluginVersion: VERSION,
+        sketchVersion: SKETCH_VERSION,
+        updateReadyToInstall: updateReadyToInstall,
+        needsRestart: needsRestart,
+        apiURL: coerceString(apiURL),
+        selectedLayerCount: layerCounts.selectedLayerCount,
+        selectedArtboardCount: layerCounts.selectedArtboardCount
+      });
+    },
+
+    onOpenURLInBrowser: function(urlString) {
+      NSWorkspace.sharedWorkspace().openURL(NSURL.URLWithString(urlString));
+    },
+
+    onPossibleImageDrop: function(img) {
+      handlePossibleImageDrop(context.command, img);
+    },
+
+    onPossibleTypeStyleDrop: function(typeStyle) {
+      handlePossibleTypeStyleDrop(context, typeStyle);
+    },
+
+    onAddArtboardsToDocument: function(items) {
+      resetImportSession();
+      var x = 0;
+
+      const doc = MSDocument.currentDocument();
+      // add a new page
+      const page = [doc addBlankPage];
+      // set the name to the artboard page name (just take it from the first one since they all have it)
+      [page setName: items[0].pageName];
+
+      var addedLayers = items.map(function(imageData) {
+
+        const sketchLayerURL = imageData.url.replace(/\.svg$/, '.skla');
+        const pasteboardLayers = loadSketchLayers(sketchLayerURL);
+        const layerToAdd = pasteboardLayers.layers().firstLayer();
+        const libraryContext = createLibraryContext(imageData, pasteboardLayers);
+
+        updateSharedObjectsForLayerTree(
+          context.command,
+          doc,
+          libraryContext,
+          layerToAdd,
+          true
+        );
+
+        // Add layer to document.
+        layerToAdd.frame().setX(x);
+        layerToAdd.frame().setY(0);
+        layerToAdd.setName(imageData.name);
+        [layerToAdd select:true byExpandingSelection:false];
+
+        x += layerToAdd.frame().width() + 50;
+
+        return layerToAdd;
+      });
+
+      page.addLayers(addedLayers);
+      // switch user the new page
+      [doc setCurrentPage:page];
+    },
+
+    onContextMenu: function(payload) {
+      genericContextMenu(payload, nib, postWebUIEvent);
+    },
+
+    onTypeStyleContextMenu: function(payload) {
+      typeStyleContextMenu(payload, nib, postWebUIEvent);
+    },
+
+    /*
+      Currently the menu button will be disabled in there is not styleData and even hidden in pages app.
+      If more actions will be needed there we might change those conditions and put the limitation on the menu items themselves.
+     */
+    onMoreActionsMenuCreated:function(){
+      moreActionsMenu(context, nib);
+    },
+
+    /*
+     * payload:
+     *  organizations - currently loaded organizations
+     *  styleguideId - currently selected styleguide
+     *  idToken - token as an indication if you signed in
+     *  readOnly - if the styleguide in readony mode
+     *  snapshots - if the styleguide have snapshots
+     */
+    onSettingMenuChange:function(payload){
+
+      applicationSettingsMenu(payload, context, nib, function(){
+        [defaults setObject:null forKey:'BrandAIIdKey']; //clean the key
+        [defaults setObject: null forKey: 'BrandAIStyleguideId']; //clean the styleguide id
+      });
+    },
+
+    onUIStateDidChange: function(state) {
+      nib.importExistingItemsButton.setEnabled(
+        !state.needsRestart && state.idToken && state.styleData && !state.loading
+      );
+      nib.moreActionsMenu.setEnabled(
+        !state.needsRestart && !!state.idToken && state.styleData && !state.loading
+      );
+
+      nib.appControl.setEnabled(
+        !state.needsRestart && !!state.idToken
+      );
+
+      nib.openSettingsMenu.setEnabled(
+        !state.needsRestart && !!state.idToken && !state.loading
+      );
+
+      persist.set('brandaiStyleData', state.styleData);
+      persist.set('brandaiPageData', state.pages);
+      var windowTitle = 'Brand.ai';
+      if (state.idToken){
+
+        [defaults setObject:state.idToken forKey:'BrandAIIdKey'];
+
+        if (isPagesApp(state.currentApp)){
+
+          state.organizations.forEach(function(org){
+            if (org.isDefault){
+              windowTitle += ': ' + org.name + ' - ' + (state.selectedArtboard? state.selectedArtboard.name : 'Artboards');
+            }
+          });
+
+        } else {
+          // There is style guide being displayed.
+          if (state.styleData && Object.keys(state.styleData).length > 0) {
+
+            // Use the name of the style guide in the window title.
+            state.organizations.forEach(function(org){
+              if (org.kebabName == state.styleData.styleguide.organization){
+                windowTitle += ': ' + org.name + ' - ' + (state.styleData.styleguide.name || 'Untitled Design Library');
+              }
+            });
+
+            [defaults setObject:state.styleguideId forKey:'BrandAIStyleguideId'];
+          }
+        }
+      }
+
+
+      //update the selected section upon if the user is signed in or sign out and if there is data to display
+      var appName = state.idToken ?  state.currentApp : '';
+      lastSelectedApp = state.currentApp || lastSelectedApp;
+      setSelectedSegment(nib.appControl, appName);
+
+      //set status and update date message, we want to clear if don't have style data
+      setStatusMessage(nib.lastUpdatedLabel, state);
+
+      nib.mainWindow.setTitle(windowTitle);
+    },
+
+    onStyleguideSectionChanged: function(payload){
+      [defaults setObject:payload.sectionName forKey:'BrandAISelectedSection'];
+    },
+
+    onPresentAuthModal: function(options){
+      const currentFrame = nib.mainWindow.frame();
+      const neededMinHeight = 590;
+      var newRect;
+      if (options.shown) {
+        // When the sign in is about to be shown, remember
+        // the current height as the prefered height going forward.
+        preferredWindowHeight = currentFrame.size.height;
+        if (currentFrame.size.height < neededMinHeight) {
+          newRect = rectWithNewHeightExpandingDown(currentFrame, neededMinHeight);
+        }
+      } else {
+        if (currentFrame.size.height != preferredWindowHeight) {
+          newRect = rectWithNewHeightExpandingDown(currentFrame, preferredWindowHeight);
+        }
+      }
+      if (newRect) {
+        [(nib.mainWindow) setFrame:newRect display:false animate:true];
+      }
+    },
+
+    onChooseColor: function(payload) {
+      const activeWindow = NSApplication.sharedApplication().mainWindow();
+      if (activeWindow && activeWindow.class() == 'MSDocumentWindow') {
+        const document = activeWindow.document();
+        const selection = selectedLayersInDocument(document);
+        var anyLayersWereStyled = false;
+        $.forEach(selection, function(layer) {
+          const anyLocalLayersWereStyled =
+            updateLayerColor(layer, payload.color, payload.preferBorders);
+          anyLayersWereStyled = anyLayersWereStyled || anyLocalLayersWereStyled;
+        });
+
+        if (anyLayersWereStyled) {
+          document.reloadInspector();
+          track('Layer color set');
+        } else {
+          NSBeep();
+        }
+      }
+    },
+
+    onChooseSharedStyle: function(sharedStyle) {
+      resetImportSession();
+
+      const activeWindow = NSApplication.sharedApplication().mainWindow();
+      if (activeWindow && activeWindow.class() == 'MSDocumentWindow') {
+
+        const document = activeWindow.document();
+        const selection = selectedLayersInDocument(document);
+
+        var anyLayersWereStyled = false;
+        var importedLayerStyle;
+
+        $.forEach(selection, function(layer) {
+          if (layer.className() == 'MSShapeGroup') {
+            debug('Applying shared layer style on layer ' + layer.name());
+
+            if (!anyLayersWereStyled) {
+              // If this is the first layer that we are
+              // going to style, import the shared layer
+              // style to the document now.
+
+              importedLayerStyle = addOrUpdateSharedLayerStyle(
+                document,
+                context.command,
+                sharedStyle
+              );
+            }
+
+            // Update the layer to reflect the current share style.
+            layer.setStyle(importedLayerStyle.style().copy());
+
+            // Link the layer to the shared style.
+            layer.style().setSharedObjectID(importedLayerStyle.objectID());
+
+            anyLayersWereStyled = true;
+          }
+        });
+
+        if (anyLayersWereStyled) {
+          document.reloadInspector();
+          track('Layer style set');
+        } else {
+          NSBeep();
+        }
+      }
+    },
+
+    onChooseTypeStyle: function(payload) {
+      resetImportSession();
+
+      const activeWindow = NSApplication.sharedApplication().mainWindow();
+      if (activeWindow && activeWindow.class() == 'MSDocumentWindow') {
+
+        const document = activeWindow.document();
+        const selection = selectedLayersInDocument(document);
+        var anyLayersWereStyled = false;
+
+        const typeStyle = payload.typeStyle;
+
+        var importedTextStyle;
+
+        $.forEach(selection, function(layer) {
+          if (layer.class() == 'MSTextLayer') {
+            debug('Applying text style on layer ' + layer.name());
+
+            // If the text was being edited, stop doing that
+            // now, otherwise when editing finishes, it will
+            // overwrite what we are about to do.
+            if (layer.isEditingText()) {
+              const editAction = MSEditAction.alloc().initWithDocument(document);
+              editAction.doPerformAction(null);
+            }
+
+            if (!anyLayersWereStyled) {
+              // If this is the first layer to be styled, import
+              // the shared text style to the document now.
+
+              importedTextStyle = addOrUpdateSharedTextStyle(
+                document,
+                context.command,
+                typeStyle
+              );
+            }
+
+            // Update the layer to reflect the current shared style.
+            layer.style().setTextStyle(importedTextStyle.style().textStyle());
+
+            // Link the layer to the shared style.
+            layer.style().setSharedObjectID(importedTextStyle.objectID());
+
+            anyLayersWereStyled = true;
+          }
+
+        });
+
+        if (anyLayersWereStyled) {
+          document.reloadInspector();
+          track('Typography style set');
+        } else {
+          NSBeep();
+        }
+      }
+    },
+
+    onAddColors: function(colorSectionID) {
+      const document = MSDocument.currentDocument();
+      const colorSections = [];
+
+      //todo: filter existing colors in the library from this list?
+      const colorsFromSelectedLayers =
+        $.map(getLayersColors(selectedLayersInDocument(document)), stringForMSColor);
+
+      if (colorsFromSelectedLayers.length) {
+        colorSections.push({
+          name: 'Colors from selected layers',
+          colors: colorsFromSelectedLayers
+        });
+      }
+
+      const documentColors = $.map(
+        document.documentData().assets().colors(),
+        stringForMSColor
+      );
+
+      //we want to filter from document colors of all the parents colors so they will not be suggested as possible additions to the derived styleguide
+	    var styleData = persist.get('brandaiStyleData');
+	    var parentsColors = []; //create a flat list of all parents color values
+	    styleData.globalAssets.colors.forEach(function(color){
+	      if (color.styleguideId != styleData.styleguide._id){
+	        parentsColors.push(color.value);
+        }
+	    });
+
+	    var documentColorsToAdd = documentColors.filter(function(documentColor){
+		    return !parentsColors.includes(documentColor);
+      });
+
+      if (documentColorsToAdd.length) {
+        colorSections.push({
+          name: 'Document colors',
+          colors: documentColorsToAdd
+        });
+      }
+
+      const globalColors = $.map(
+        NSApp.delegate().globalAssets().colors(),
+        stringForMSColor
+      );
+      if (globalColors.length) {
+        colorSections.push({
+          name: 'Global colors',
+          colors: globalColors
+        });
+      }
+
+      const addColorsApp = loadReactAppInWebView(context.plugin, nib.addColorsWebView, 'AddColorsApp', {
+        onReady: function() {
+          addColorsApp.setColors(colorSections);
+          [(nib.mainWindow) beginSheet:(nib.addColorsSheet) completionHandler:null];
+        },
+        onSelectionChanged: function(itemCount) {
+          nib.addColorsAddButton.setEnabled(itemCount > 0);
+        }
+      });
+
+      // Start with disabled button since no colors will be selected.
+      nib.addColorsAddButton.setEnabled(false);
+
+      nib.attachTargetAndAction(nib.addColorsAddButton, function() {
+        addColorsApp.getSelectedColors(function(err, colors) {
+          nib.mainWindow.endSheet(nib.addColorsSheet);
+          postWebUIEvent('onAddNewColors', {
+            sectionID: colorSectionID,
+            colors: colors
+          });
+        });
+      });
+    },
+
+    onAddPalette: function() {
+      debug('add palette');
+      const newPaletteName = displayPrompt({
+        title: 'New palette name',
+        defaultText: 'Untitled palette',
+        buttons: ['Add Palette', 'Cancel']
+      });
+
+      if (newPaletteName != null) {
+        postWebUIEvent('onAddNewPalette', newPaletteName);
+      }
+    },
+
+    onAddTypeStyles: function() {
+      const document = MSDocument.currentDocument();
+      const textStyles = document.documentData().layerTextStyles().objects();
+
+      if (textStyles.count() == 0) {
+        displayAlert({
+          title: 'No text styles to upload',
+          description: 'The current Sketch document has no text styles.'
+        });
+        return;
+      }
+
+      const typeStyleIDsBySharedTextStyleObjectID =
+        getPreviouslyImportedSharedTextStylesMap(document.documentData());
+
+	    var styleData = persist.get('brandaiStyleData');
+	    var parentsTypeStyles = []; //create a flat list of all parents type styles ids
+	    styleData.globalAssets.typeStyles.forEach(function(type){
+		    if (type.styleguideId != styleData.styleguide._id){
+			    parentsTypeStyles.push(type._id);
+		    }
+	    });
+
+	    var typeStylesToAdd = [];
+	    $.forEach(textStyles, function(textStyle) {
+		    // Find Brand.ai _id, for shared text styles in the document that have one.
+		    const brandAIID = typeStyleIDsBySharedTextStyleObjectID[textStyle.objectID()];
+		    // If it is unsynced typeStyle and if it is not part of parent styleguides set it on the style and add the style to candidates list
+        if (!brandAIID || !parentsTypeStyles.includes(brandAIID.trimRight())) {
+			    const typeStyle = brandAITypeStyleFromSketchSharedStyle(textStyle);
+			    if (brandAIID && brandAIID != null) {
+				    typeStyle._id = brandAIID;
+			    }
+			    typeStylesToAdd.push(typeStyle);
+		    }
+	    });
+
+      const addTypeStylesApp = loadReactAppInWebView(context.plugin, nib.addTypeStylesWebView, 'AddTypeStylesApp', {
+        onReady: function() {
+          addTypeStylesApp.setTypeStyles(typeStylesToAdd);
+          [(nib.mainWindow) beginSheet:(nib.addTypeStylesSheet) completionHandler:null];
+        },
+        onSelectionChanged: function(selectedCount, totalCount) {
+          nib.addTypeStylesAddButton.setEnabled(selectedCount > 0);
+          nib.addTypeStylesSelectAllCheckbox.setState(selectedCount == totalCount);
+        }
+      });
+
+      // Button starting states.
+      nib.addTypeStylesAddButton.setEnabled(false);
+      nib.addTypeStylesSelectAllCheckbox.setState(NSOffState);
+
+      nib.attachTargetAndAction(nib.addTypeStylesAddButton, function() {
+        addTypeStylesApp.getSelectedTypeStyles(function(err, typeStyles) {
+          nib.mainWindow.endSheet(nib.addTypeStylesSheet);
+          const fontVariants = {};
+          typeStyles.forEach(function(typeStyle) {
+            if (!fontVariants[typeStyle.fontFamily]) {
+              fontVariants[typeStyle.fontFamily] =
+                fontVariantsInFontFamily(typeStyle.fontFamily);
+            }
+          });
+          postWebUIEvent('onAddNewTypeStyles', { typeStyles, fontVariants });
+        });
+      });
+
+      nib.attachTargetAndAction(nib.addTypeStylesSelectAllCheckbox, function() {
+        addTypeStylesApp.toggleSelectAll();
+      });
+    },
+
+    onAddSharedStyles: function() {
+      const document = MSDocument.currentDocument();
+      const layerStyles = document.documentData().layerStyles().objects();
+
+      if (layerStyles.count() == 0) {
+        displayAlert({
+          title: 'No layer styles to upload',
+          description: 'The current Sketch document has no layer styles.'
+        });
+        return;
+      }
+
+      const sharedStyleIDsByLayerStyleObjectID =
+        getPreviouslyImportedSharedLayerStylesMap(document.documentData());
+
+	    var styleData = persist.get('brandaiStyleData');
+	    var parentsSharedStyles = []; //create a flat list of all parents shared styles ids
+	    styleData.globalAssets.sharedStyles.forEach(function(style){
+		    if (style.styleguideId != styleData.styleguide._id){
+			    parentsSharedStyles.push(style._id);
+		    }
+	    });
+
+	    var sharedStylesToAdd = [];
+      $.forEach(layerStyles, function(layerStyle) {
+        const sharedStyle = brandAISharedStyleFromSketchSharedStyle(layerStyle);
+        // Add Brand.ai _id, for shared styles in the document that have one.
+        const brandAIID = sharedStyleIDsByLayerStyleObjectID[layerStyle.objectID()];
+
+	      // If it is unsynced sharedStyle and if it is not part of parent styleguides set it on the style and add the style to candidates list
+	      if (!brandAIID || !parentsSharedStyles.includes(brandAIID.trimRight())) {
+	        if (brandAIID && brandAIID != null) {
+		        sharedStyle._id = brandAIID;
+	        }
+	        const pngData = thumbnailPNGDataForLayerStyle(layerStyle, 24, 24);
+	        const thumbnailFilePath = getTempFilePath('Brand-ai-Sketch-layerStyle' + layerStyle.objectID(), 'png');
+	        [pngData writeToFile:thumbnailFilePath atomically:false];
+	        sharedStyle.thumbnailUrl = thumbnailFilePath;
+
+	        sharedStylesToAdd.push(sharedStyle);
+        }
+      });
+
+      const addSharedStylesApp = loadReactAppInWebView(
+        context.plugin,
+        nib.addSharedStylesWebView,
+        'AddSharedStylesApp', {
+          onReady: function() {
+            addSharedStylesApp.setSharedStyles(sharedStylesToAdd);
+            [(nib.mainWindow) beginSheet:(nib.addSharedStylesSheet) completionHandler:null];
+          },
+          onSelectionChanged: function(selectedCount, totalCount) {
+            nib.addSharedStylesAddButton.setEnabled(selectedCount > 0);
+            nib.addSharedStylesSelectAllCheckbox.setState(selectedCount == totalCount);
+          }
+        }
+      );
+
+      // Button starting states.
+      nib.addSharedStylesAddButton.setEnabled(false);
+      nib.addSharedStylesSelectAllCheckbox.setState(NSOffState);
+
+      nib.attachTargetAndAction(nib.addSharedStylesAddButton, function() {
+        addSharedStylesApp.getSelectedSharedStyles(function(err, sharedStyles) {
+          nib.mainWindow.endSheet(nib.addSharedStylesSheet);
+          postWebUIEvent('onAddNewSharedStyles', sharedStyles);
+        });
+      });
+
+      nib.attachTargetAndAction(nib.addSharedStylesSelectAllCheckbox, function() {
+        addSharedStylesApp.toggleSelectAll();
+      });
+
+    },
+
+    onWindowDidBlur: function() {
+      addFirstMouseAcceptor(nib);
+    },
+
+    onUploadArtboard: function(options) {
+      options = options || {};
+      const document = MSDocument.currentDocument();
+
+      const selectedArtboards = findLayerArtboards(selectedLayersInDocument(document));
+      const numberOfArtboards = selectedArtboards.count();
+
+      if (numberOfArtboards == 0) {
+        displayAlert({
+          title: 'No artboards to upload',
+          description: 'Please select one or more artboards to upload.'
+        });
+        return;
+      }
+
+      if (options.forceArtboardName && numberOfArtboards !== 1) {
+        displayAlert({
+          title: 'Upload a single artboard',
+          description: 'Please select a single artboard to add as a new version.'
+        });
+        return;
+      }
+      // find correct artboard and page
+      const layersById = {};
+      const layersToUpload = [];
+
+      var pages = persist.get('brandaiPageData');
+      pages = pages.find ? pages : [];
+
+      var pageName = options.forcePageName;
+
+      if (!pageName) {
+        pageName = displayPrompt({
+          title: 'New page',
+          defaultText: coerceString(document.currentPage().name()),
+          description: 'Choose a name for the new page to upload artboards into',
+          buttons: ['Upload', 'Cancel']
+        });
+
+        if (!pageName) {
+          // User did not supply a page name;
+          return;
+        }
+      }
+
+      var existingPage = pages.find(function(page) {
+        return page.name === pageName;
+      });
+
+      var message = 'You are about to upload '
+        + numberOfArtboards + ' artboard' +
+        (numberOfArtboards > 1 ? 's' : '') +
+        ' into the ' + (existingPage ? '"' : 'new "')
+        + pageName + '" page.';
+
+      if (numberOfArtboards == 1 && existingPage) {
+        var singleArtboardName = options.forceArtboardName || coerceString(selectedArtboards.objectAtIndex(0).name());
+
+        var existingArtboard = existingPage.artboards.find(function(artboard){
+          return artboard.name === singleArtboardName;
+        });
+
+        if (existingArtboard) {
+          message = 'Upload a new version of "' + singleArtboardName + '".';
+        }
+      }
+
+      const promptResult = displayPrompt({
+        title: 'Upload artboards',
+        description: message + '\n\nEnter a description (optional).',
+        buttons: ['Upload', 'Cancel']
+      });
+
+      if (promptResult === null) { // user canceled
+        return;
+      }
+
+      for (var i = 0; i < numberOfArtboards; i++) {
+        var layer = selectedArtboards.objectAtIndex(i);
+        var objectId = layer.objectID();
+        layersById[objectId] = layer;
+
+        var artboardName = coerceString(layer.name());
+
+        layersToUpload.push({
+          id: coerceString(objectId),
+          pageName: pageName,
+          artboardName: options.forceArtboardName || artboardName,
+          name: options.forceArtboardName || artboardName,
+          description: promptResult
+        })
+      }
+
+      NSThread.mainThread().threadDictionary()['brandaiLayersByID'] = layersById;
+
+      debug('Layers to upload:');
+      debug(layersToUpload);
+
+      postWebUIEvent('onUploadArtboard', {
+        layersToUpload: layersToUpload
+      });
+    },
+
+    // Upload layers - stage #2
+    onUploadLayers: function(payload) {
+      const document = MSDocument.currentDocument();
+      const selectedLayers = normalizeSelectedSymbols(selectedLayersInDocument(document));
+
+      if (selectedLayers.count() == 0) {
+        displayAlert({
+          title: 'No layers to upload',
+          description: 'Select at least one layer.'
+        });
+        return;
+      }
+
+      var newSection;
+      var newSectionName;
+
+      if (!payload.sectionID) {
+        // Uploading to a new section.
+        newSectionName = displayPrompt({
+          title: 'New section',
+          defaultText: document.currentPage().name(),
+          description: 'Choose a name for the new section to upload layers into.',
+          buttons: ['Upload', 'Cancel']
+        });
+
+        if (!newSectionName) {
+          // User did not supply a section name;
+          return;
+        }
+
+        // The new section type should match the area where the layers were
+        // uploaded from.
+        newSection = {
+          name: newSectionName,
+          imageType: payload.imageType
+        };
+      }
+
+      const styleData = persist.get('brandaiStyleData');
+
+      const layersChosenForUpload = [];
+      const layersToUpload = [];
+      const layersToUploadByID = {};
+
+      const getPreviewUrl = function(image){
+        var previewUrl = image.url;
+        if (image.additionalFormats){
+          const pngFormat = image.additionalFormats.find(function(format){
+             return (format.extension === 'png');
+          });
+          if (pngFormat){
+            previewUrl = pngFormat.url;
+          }
+        }
+        return previewUrl;
+      };
+
+      // Look ahead to see how many layers will need user input to decide what
+      // to do with them.
+      var userInputNeededCount = 0;
+      const firstPassLayers = $.map(selectedLayers, function(layer) {
+        var userInputNeeded = false;
+        var imageID;
+        var matchingImageName;
+        var matchingImageURL;
+        var matchingImageSectionType = payload.imageType;
+        var matchingImageSectionID = payload.sectionID;
+        var matchingImageBackgroundColor;
+        var matchingImageBackgroundColorID;
+
+        // Determine if we will need user input...
+        // Look for items with the same name in the same section.
+        const layerName = layer.name();
+        const items = getItemsInImageSection(styleData.styleguide, payload.imageType, payload.sectionID);
+        if (items && items.find) {
+          const itemWithSameName = items.find(function(item) {
+            return layerName == item.displayName;
+          });
+          if (itemWithSameName) {
+            userInputNeeded = true;
+            userInputNeededCount += 1;
+            imageID = itemWithSameName._id;
+            matchingImageName = itemWithSameName.displayName;
+            matchingImageURL = getPreviewUrl(itemWithSameName);
+            matchingImageBackgroundColor = itemWithSameName.backgroundColor;
+            matchingImageBackgroundColorID = itemWithSameName.backgroundColorID;
+          }
+        }
+
+        return {
+          layer: layer,
+          needsUserInput: userInputNeeded,
+          imageID: imageID,
+          matchingImageSectionType: matchingImageSectionType,
+          matchingImageSectionID: matchingImageSectionID,
+          matchingImageName: matchingImageName,
+          matchingImageURL: matchingImageURL,
+          matchingImageBackgroundColor: matchingImageBackgroundColor,
+          matchingImageBackgroundColorID: matchingImageBackgroundColorID
+        }
+      });
+
+      var userAnsweredCount = 0;
+      for (var i = 0; i < firstPassLayers.length; i++) {
+        const layerInfo = firstPassLayers[i];
+        const layer = layerInfo.layer;
+        var imageID = layerInfo.imageID;
+        var sectionID = layerInfo.matchingImageSectionID;
+        var backgroundColorID = layerInfo.matchingImageBackgroundColorID;
+        var forceUploadNewItem = false;
+
+        if (layerInfo.needsUserInput) {
+          const userChoice = displayReplaceImageDialog(nib, {
+            allowSkip: firstPassLayers.length > 1,
+            totalItems: userInputNeededCount,
+            itemNumber: userAnsweredCount += 1,
+            newItemName: layer.name(),
+            newItemDataURL: dataURLFromData(
+              exportDataForArtboard(document, layer, 'png'), 'image/png'
+            ),
+            oldItemName: layerInfo.matchingImageName,
+            oldItemDataURL: dataURLFromData(
+              dataFromURL(layerInfo.matchingImageURL),
+              imageMediaTypeFromURL(layerInfo.matchingImageURL)
+            ),
+            backgroundColor: layerInfo.matchingImageBackgroundColor
+          });
+          if (userChoice == ImageReplaceResponse.Cancel) {
+            return;
+
+          } else if (userChoice == ImageReplaceResponse.Skip) {
+            continue;
+
+          } else if (userChoice == ImageReplaceResponse.CreateNew) {
+            // Clear the ID so it will be uploaded as a new image.
+            imageID = void 0;
+            backgroundColorID = void 0;
+
+            if (newSection) {
+              // If we are creating a new section, then forced new items should
+              // go there instead of the section of a matched item.
+              sectionID = void 0;
+            } else {
+              // If we are not creating a new section, then forced new items
+              // should go into the section with the button that was clicked
+              // to kick off the upload in the first place.
+              sectionID = payload.sectionID;
+            }
+          }
+
+        } else {
+          // If we didn’t need user input, then ensure we are going to upload
+          // as a new image. The imageID could be out of date, and might not
+          // have contributed to a match, or it could be an ID from another
+          // section. Either way, we don’t care. If we already determined we
+          // were not going to ask the user, the behavior now should be to
+          // upload a new image.
+          imageID = void 0;
+        }
+
+        layersChosenForUpload.push(layer);
+
+        layersToUploadByID[layer.objectID()] = layer;
+
+        layersToUpload.push({
+          id: coerceString(layer.objectID()),
+          name: coerceString(layer.name()),
+          sectionType: coerceString(layerInfo.matchingImageSectionType),
+          sectionID: coerceString(sectionID),
+          sectionName: coerceString(newSectionName),
+          imageID: coerceString(imageID),
+          symbolID: coerceJS(layer.symbolID && layer.symbolID()),
+          backgroundColorID: coerceString(backgroundColorID),
+        });
+      }
+
+      const symbolMasterDependencies = symbolMasterDependenciesForLayers(document, layersChosenForUpload);
+
+      symbolMasterDependencies.forEach(function(symbol) {
+        layersToUploadByID[symbol.objectID()] = symbol;
+        layersToUpload.push({
+          id: coerceString(symbol.objectID()),
+          name: coerceString(symbol.name()),
+          isSymbolMasterDependency: coerceBool(true),
+          symbolID: coerceString(symbol.symbolID()),
+          isNestedInMasterSymbol: coerceBool(symbol.isNestedInMasterSymbol)
+        });
+      });
+
+      // Add in all dependencies of the layers that will be uploaded as well.
+      const styleDependencies = styleDependenciesForLayers(document, styleData, layersToUploadByID);
+
+      NSThread.mainThread().threadDictionary()['brandaiLayersByID'] = layersToUploadByID;
+
+      debug('Layers to upload:');
+      debug(layersToUpload);
+      debug('New section:');
+      debug(newSection);
+      debug('Shared layer styles to upload:');
+      debug(styleDependencies.sharedLayerStylesToUpload);
+      debug('Shared type styles to upload:');
+      debug(styleDependencies.sharedTypeStylesToUpload);
+      debug('Font variants to upload:');
+      debug(styleDependencies.fontVariantsToUpload);
+
+      if (layersToUpload.length) {
+        postWebUIEvent('onUploadLayers', {
+          newSection: newSection,
+          layersToUpload: layersToUpload,
+          sharedLayerStylesToUpload: styleDependencies.sharedLayerStylesToUpload,
+          sharedTypeStylesToUpload: styleDependencies.sharedTypeStylesToUpload,
+          fontVariantsToUpload: styleDependencies.fontVariantsToUpload
+        });
+      }
+    },
+
+    onUpdateDownloadComplete: function(newVersion) {
+      const updateFileData =
+        NSData.dataWithContentsOfURL(
+          NSURL.URLWithString(
+            nib.mainWebView.windowScriptObject().evaluateWebScript(
+              'window.brandai.updateFileDataURI')));
+      const tempFilePath =
+        getTempFilePath('Brand-ai-Sketch-plugin-update-' + newVersion.version, 'zip');
+      if ([updateFileData writeToFile:tempFilePath atomically:true]) {
+        newVersion.filePath = tempFilePath;
+        [defaults setObject:newVersion forKey:'BrandAIUpdate'];
+        postWebUIEvent('onUpdateDownloadIsReady', newVersion);
+      }
+    },
+
+    onInstallUpdate: function() {
+      const answer = displayAlert({
+        title: 'Sketch may need to be restarted',
+        description: 'The plugin may stop working until Sketch is quit and opened again if you install now.',
+        buttons: ['Install', 'Cancel']
+      });
+
+      if (answer == 1000) {
+        var successfullyInstalled = false;
+        const updateInfo = defaults.dictionaryForKey('BrandAIUpdate') || {};
+        nib.progressIndicator.setDoubleValue(0);
+        nib.progressIndicator.setMaxValue(100);
+        nib.progressLabel.setStringValue('Installing Update…');
+        [(nib.mainWindow) beginSheet:(nib.progressSheet) completionHandler:null];
+
+        try {
+          const installedPluginURL = context.command.pluginBundle().url();
+          const fileManager = NSFileManager.defaultManager();
+          const updateFilePath = updateInfo.filePath;
+
+          if (fileManager.fileExistsAtPath(updateFilePath)) {
+            // Create directory to unzip files into.
+            const unzipFolderPath =
+              getTempFilePath('Brand-ai-Sketch-plugin-update-unzipped');
+            [fileManager createDirectoryAtPath:unzipFolderPath
+              withIntermediateDirectories:false attributes:null error:null];
+
+            nib.progressIndicator.setDoubleValue(20);
+
+            // Unzip files.
+            const unzipTask = NSTask.new();
+            unzipTask.setLaunchPath('/usr/bin/unzip');
+            unzipTask.setCurrentDirectoryPath(unzipFolderPath);
+            unzipTask.setArguments([updateFilePath]);
+            unzipTask.launch();
+            unzipTask.waitUntilExit();
+
+            nib.progressIndicator.setDoubleValue(70);
+
+            // Check that the downloaded plugin looks okay.
+            // Assume there is only one file at root of zip and it is the plugin.
+            const unzippedFiles =
+              [fileManager contentsOfDirectoryAtPath:unzipFolderPath error:null];
+            const newPluginFileName = unzippedFiles[0];
+            if (/\.sketchplugin$/.test(coerceString(newPluginFileName))) {
+              // Remove old plugin and install new one.
+              const newPluginPath =
+                unzipFolderPath.stringByAppendingPathComponent(newPluginFileName);
+              const newPluginURL = NSURL.fileURLWithPath(newPluginPath);
+              [fileManager removeItemAtURL:installedPluginURL error:null];
+              [fileManager moveItemAtURL:newPluginURL toURL:installedPluginURL error:null];
+
+              nib.progressIndicator.setDoubleValue(90);
+
+              // Clean up.
+              [fileManager removeItemAtPath:unzipFolderPath error:null];
+              [fileManager removeItemAtPath:updateFilePath error:null];
+
+              nib.progressIndicator.setDoubleValue(100);
+              successfullyInstalled = true;
+
+            } else {
+              debug('Error installing update: No plugin in unziped update file.');
+            }
+          } else {
+            debug('Error installing update: No update file.')
+          }
+
+        } catch(e) {
+          debug('Error installing update: Other.')
+        }
+
+        [(nib.mainWindow) endSheet:(nib.progressSheet)];
+
+        if (successfullyInstalled) {
+          postWebUIEvent('onInstallUpdateDidFinish');
+        } else {
+          const result = displayAlert({
+            title: 'Failed to install',
+            description: 'There was a problem automatically installing the update. You can download and install the plugin manually.',
+            buttons: ['Download', 'Cancel']
+          });
+          if (result == 1000) {
+            NSWorkspace.sharedWorkspace()
+              .openURL(NSURL.URLWithString(updateInfo.downloadURL));
+          }
+        }
+      }
+    },
+
+    onRestartPlugin: function() {
+      const sketchDelegate = NSApplication.sharedApplication().delegate();
+      const pluginURL = context.command.pluginBundle().url();
+      exit();
+      [sketchDelegate runPluginCommandWithIdentifier:'brandai-display' fromBundleAtURL:pluginURL];
+    },
+
+    onTypeStylesDidLoad: function(typeStyles) {
+      const installedFonts = {};
+      (typeStyles || []).forEach(function(typeStyle) {
+        const font = NSFontFromBrandAITypeStyle(typeStyle);
+        if (font) {
+          installedFonts[typeStyle._id] = coerceJS(font.fontName());
+        }
+      });
+      postWebUIEvent('onInstalledFontsAvailable', installedFonts);
+    },
+
+    onTypeStylesDidSaveToCloud: function(mapping) {
+      // TODO: It’s not safe to assume that the current
+      // document is the correct one. Another document
+      // window could have become key since the upload
+      // began.
+      const document = MSDocument.currentDocument();
+      storeImportedSharedTextStylesMap(context.command, document.documentData(), mapping);
+    },
+
+    onSharedStylesDidSaveToCloud: function(mapping) {
+      // TODO: It’s not safe to assume that the current
+      // document is the correct one. Another document
+      // window could have become key since the upload
+      // began.
+      const document = MSDocument.currentDocument();
+      storeImportedSharedLayerStylesMap(context.command, document.documentData(), mapping);
+    },
+
+    onRunJob: function(jobId) {
+      const job = JOBS[jobId];
+      if (job) {
+        try {
+          job();
+          postWebUIEvent('onJobDidFinish', jobId);
+        } catch(e) {
+          if (JOBS.errorHandler) {
+            JOBS.errorHandler(e);
+          } else {
+            debug('No job error handler for job ' + jobId + 'error on next line:');
+            debug(e);
+          }
+        }
+      }
+    },
+
+    onAllJobsDidFinish: function() {
+      if (JOBS.completionHandler) {
+        JOBS.completionHandler();
+      }
+    },
+
+    onCallFunction: function(payload) {
+      postWebUIEvent('onCallback', {
+        callbackID: payload.callbackID,
+        payload: coerceJS(nativeUIEventFunctions[payload.functionName](payload.args))
+      });
+    },
+
+    onSetDefaultsObject: function(payload) {
+      if (!payload.value) {
+        payload.value = null;
+      }
+      [[NSUserDefaults standardUserDefaults] setObject:(payload.value)
+        forKey:(payload.key)];
+    },
+
+    onShowProgresSheet: function(payload) {
+      nib.progressIndicator.setDoubleValue(0);
+      if (payload) {
+        if (payload.label) {
+          nib.progressLabel.setStringValue(payload.label);
+        }
+        if (payload.maxValue) {
+          nib.progressIndicator.setMaxValue(payload.maxValue);
+        }
+      }
+
+      [(nib.mainWindow) beginSheet:(nib.progressSheet) completionHandler:null];
+    },
+
+    onHideProgressSheet: function() {
+      [(nib.mainWindow) endSheet:(nib.progressSheet)];
+    },
+
+    onResetProgressSheet: function(payload) {
+      nib.progressIndicator.setDoubleValue(0);
+	    nib.progressIndicator.setMaxValue(payload.maxValue);
+	    if (payload.label){
+		    nib.progressLabel.setStringValue(payload.label);
+      }
+
+    },
+
+    onIncrementProgress: function(incrementBy) {
+      nib.progressIndicator.incrementBy(incrementBy || 1);
+    }
+
+  };
+
+  var webUIDelegate = createCocoaObject({
+    // This is a hack to receive data from the web view since
+    // windowScriptObject doesn’t work.
+    'webView:setStatusText:': function(webView, statusText) {
+      if (!statusText || statusText == '') {
+        // Empty strings are expected when the view first loads; just ignore it.
+        return;
+      }
+      try {
+        var passedData = JSON.parse(statusText);
+      } catch (e) {
+        debug("Unable to parse status text \"" + statusText + "\"");
+        return;
+      }
+      var eventName = passedData.eventName;
+      var payload = passedData.payload;
+      var handler = nativeUIEventHandlers[eventName];
+      if (!handler) {
+        debug("No event handler for native UI event \"" + eventName + "\"");
+      } else {
+        try {
+          handler.call(null, payload);
+        } catch(e) {
+          // For some reason errors are not logged unless we do this:
+          log(e.toString());
+          log(e.stack);
+        }
+      }
+    }
+  });
+  nib.mainWebView.setUIDelegate(webUIDelegate);
+
+  /* Launch plugin
+     ------------- */
+
+  // Load web environment (local html file)
+  nib.mainWebView.preferences().setCacheModel(WebCacheModelDocumentBrowser);
+  loadReactAppInWebView(context.plugin, nib.mainWebView, 'MainApp');
+
+  // Show window.
+  nib.mainWindow.makeKeyAndOrderFront(null);
+
+  nib.destroy();
+}
+
+function manageSymbolsApp(context, nib) {
+
+  var styleData = persist.get('brandaiStyleData');
+
+  //currently sending only this styleguide and not parent symbols
+  var masterSymbols = [];
+
+  const directLibrarySymbolsById = {};
+  applyToAllImages(styleData, function(image, imageType, sectionId) {
+    if (image.metadata && image.metadata.sketchSymbolId) {
+      directLibrarySymbolsById[image.metadata.sketchSymbolId] = { image: image };
+    }
+  });
+
+  styleData.styleguide.sketchSymbols.forEach(function(symbol){
+    // we will allow for deletion only symbols that are not directly in the design library
+    if (!directLibrarySymbolsById[symbol.metadata.sketchSymbolId]){
+      masterSymbols.push(symbol);
+    }
+  });
+
+  const manageSymbolsApp = loadReactAppInWebView(context.plugin, nib.manageSymbolsWebView, 'ManageSymbolsApp', {
+    onReady: function() {
+      manageSymbolsApp.setSymbols(masterSymbols);
+      [(nib.mainWindow) beginSheet:(nib.manageSymbolsSheet) completionHandler:null];
+    },
+    onSelectionChanged: function(selectedCount) {
+      nib.manageSymbolsDeleteButton.setEnabled(selectedCount > 0);
+    }
+  });
+
+  // Button starting states.
+  nib.manageSymbolsDeleteButton.setEnabled(false);
+
+  nib.attachTargetAndAction(nib.manageSymbolsDeleteButton, function() {
+    manageSymbolsApp.getSelectedSymbols(function(err, selectedSketchSymbols) {
+      nib.mainWindow.endSheet(nib.manageSymbolsSheet);
+      if (selectedSketchSymbols.length && selectedSketchSymbols.length > 0) {
+        const idsToDelete = selectedSketchSymbols.map(function(symbol){
+          return symbol._id;
+        })
+        postWebUIEvent('onDeleteItems', { type: 'sketchSymbols', elementIDs: idsToDelete, customDescription: 'Deleting nested symbols which are in use might break the containing layers.\nYou can’t undo this action.' });
+      }
+    });
+  });
+};
+
+
+function selectiveSyncApp(context, nib) {
+
+  var styleData = persist.get('brandaiStyleData');
+
+  const selectiveSyncApp = loadReactAppInWebView(context.plugin, nib.selectiveSyncWebView, 'SelectiveSyncApp', {
+    onReady: function() {
+      //potentially can store the last selection and set it here to the app
+      [(nib.mainWindow) beginSheet:(nib.selectiveSyncSheet) completionHandler:null];
+    },
+    onSelectionChanged: function(selectedCount) {
+      nib.selectiveSyncImportButton.setEnabled(selectedCount > 0);
+    }
+  });
+
+  nib.attachTargetAndAction(nib.selectiveSyncImportButton, function() {
+    selectiveSyncApp.getSelectedItems(function(err, selectedOptions) {
+      nib.mainWindow.endSheet(nib.selectiveSyncSheet);
+      if (selectedOptions && Object.keys(selectedOptions).length > 0) {
+        importStyleData(context, nib, null, false, selectedOptions);
+      }
+    });
+  });
+};
+
+
+function importStyleData(context, nib, originElement, onlyExisting, typesToSync) {
+  const document = [MSDocument currentDocument];
+  if (document) {
+
+    const handleImportError = function(e) {
+      debug(e.name + ": " + e.message);
+      postWebUIEvent('onLogMessage', { level: 'error', data: { message: e.name + ": " + e.message } });
+      // Reset UI.
+      nib.importProgressIndicator.stopAnimation(null);
+      if (originElement) {
+        originElement.setEnabled(true);
+      }
+
+      // Show alert modal dialog.
+      displayAlert({
+        title: 'Error Syncing Data',
+        description: 'There was an error while trying to add styles to the document.',
+        style: 'error'
+      });
+    }
+
+    // Import.
+    try {
+      typesToSync = typesToSync || constants.TYPES_TO_SYNC;
+
+      var reportedSyncedTypes = Object.keys(typesToSync);
+
+      var reprotedAction = onlyExisting ? 'Updated styles and symbols' : 'Import styles and symbols';
+
+      track(reprotedAction, { syncedTypes: reportedSyncedTypes });
+      const styleData = persist.get('brandaiStyleData');
+      nib.importProgressIndicator.startAnimation(null);
+      if (originElement) {
+        originElement.setEnabled(false);
+      }
+
+      resetImportSession();
+
+      //if undefined bring all types, is this the desired behavior?
+      debug('Types To Sync:');
+      debug(typesToSync);
+      if (!onlyExisting && typesToSync[constants.TYPES_TO_SYNC.colors.key]) { //We can't update colors as we have no linking for them, so skip them in update mode
+        importColors(context.command, document, styleData);
+      }
+      if (typesToSync[constants.TYPES_TO_SYNC.typeStyles.key]) {
+        importTypeStyles(context.command, document, styleData, onlyExisting);
+      }
+      if (typesToSync[constants.TYPES_TO_SYNC.sharedStyles.key]) {
+        importLayerStyles(context.command, document, styleData, onlyExisting);
+      }
+      if (typesToSync[constants.TYPES_TO_SYNC.symbols.key]) {
+        importImages(context.command, document, 'icons', styleData, onlyExisting);
+        importImages(context.command, document, 'images', styleData, onlyExisting);
+        importImages(context.command, document, 'componentImages', styleData, onlyExisting);
+      }
+
+      runJobs({
+        onComplete: function() {
+          nib.importProgressIndicator.stopAnimation(null);
+          if (originElement) {
+            originElement.setEnabled(true);
+          }
+
+
+          // Some symbol instances may not have redrawn after their master
+          // changed. This should fix it. Note that this works because symbol
+          // instances don’t exhibit this problem when the current page is
+          // the symbols page.
+          const userPage = document.currentPage();
+          const symbolsPage = getPageByName(document, 'Symbols');
+          document.setCurrentPage(symbolsPage);
+          document.setCurrentPage(userPage);
+        },
+        onError: handleImportError
+      });
+    } catch (e) {
+      handleImportError(e);
+    }
+
+  } else {
+    debug('No current document');
+  }
+}
+
+
+function setStatusMessage(lastUpdatedLabel, state) {
+  var lastStatusMessage = '';
+
+  if (!isPagesApp(state.currentApp)) {
+    // Connection status indication
+    if (state.connected && !!state.styleData) {
+      // only if it is not snapshot we will write up to date.
+      if (!state.styleData.styleguide.snapshotId) {
+        lastStatusMessage = 'Up to date. ';
+      }
+    } else {
+      lastStatusMessage = 'Disconnected. ';
+    }
+
+    var styleguide = state.styleData && state.styleData.styleguide;
+    // Add version name indication if relevant
+    if (styleguide && styleguide.snapshotId && styleguide.snapshotName) {
+      var snapshotName = styleguide.snapshotName;
+      // trim the version name if it is very long, currently hard coded but can be a function of window size
+      const maxLength = 30;
+      if (snapshotName.length > maxLength) {
+        snapshotName = snapshotName.substring(0, maxLength - 3).trim() + '...';
+      }
+      lastStatusMessage += 'Version ' + snapshotName + ' ';
+    }
+
+    // Time indication
+    if (state.relativeUpdateDate) {
+      lastStatusMessage += (state.snapshotId ? 'created ' : 'Last edited ') + state.relativeUpdateDate + '.';
+    }
+  }
+
+  const labelColor = state.connected ? NSColor.labelColor() : NSColor.disabledControlTextColor();
+  lastUpdatedLabel.setStringValue(lastStatusMessage);
+  lastUpdatedLabel.setTextColor(labelColor);
+}
+
+function exit() {
+  var app = NSApplication.sharedApplication();
+  $.forEach(app.windows(), function(window) {
+    if (window.identifier() == 'brandai') {
+      // Close the main window as if the user had clicked the close button.
+      window.performClose(null);
+    }
+  });
+}
+
+function sendDataToWebView(webView, data) {
+  const jsonData = JSON.stringify(coerceJS(data));
+  debug('NATIVE->WEB: ' + jsonData);
+  const script = 'window.brandai.receiveDataFromNativeUI(' + jsonData + ')';
+  webView.windowScriptObject().evaluateWebScript(script);
+}
+
+function postWebUIEvent(eventName, payload) {
+  var webView = persist.get('brandaiMainWebView');
+  if (webView) {
+    var data = JSON.stringify({ eventName: eventName, payload: payload });
+    var script = "window.brandai.handleEvent(" + data + ")";
+    webView.windowScriptObject().evaluateWebScript(script);
+  } else {
+    debug('No WebView present. Event cannot be posted to the web UI.');
+  }
+}
+
+function queueJob(job) {
+  const jobId = Math.random().toString(36).substr(2, 10);
+  JOBS[jobId] = job;
+  postWebUIEvent('onQueueJob', jobId);
+}
+
+function runJobs(options) {
+  options = options || {};
+  JOBS.completionHandler = options.onComplete;
+  JOBS.errorHandler = options.onError;
+  postWebUIEvent('onStartRunningJobsInQueue');
+}
+
+function track(eventName, properties) {
+  postWebUIEvent('onTrack', { eventName: eventName, properties: properties });
+}
+
+function droppedLayerFromAnyDocument(layerPredicate) {
+  var droppedLayer;
+  var targetDocument;
+  $.forEach(NSApplication.sharedApplication().windows(), function(window) {
+    if (window.class() == 'MSDocumentWindow' && window.document()) {
+      const selection = selectedLayersInDocument(window.document());
+      if (selection.count() == 1) {
+        const selectedLayer = selection.firstObject();
+        if (layerPredicate(selectedLayer)) {
+          droppedLayer = selectedLayer;
+          targetDocument = window.document();
+          return false;
+        }
+      }
+    }
+  });
+  return {
+    droppedLayer: droppedLayer,
+    targetDocument: targetDocument
+  };
+}
+
+function getSelectedLayerCount() {
+  const document = MSDocument.currentDocument();
+  var result = {
+    layers: 0,
+    artboards: 0
+  };
+
+  if (document) {
+    const selectedLayers = selectedLayersInDocument(document);
+    result = {
+      selectedLayerCount: selectedLayers.count(),
+      selectedArtboardCount: countLayerArtboards(selectedLayers)
+    }
+  }
+  return result;
+}
+
+function handlePossibleTypeStyleDrop(context, typeStyle) {
+  debug('Possible text drop');
+  resetImportSession();
+  const selected = droppedLayerFromAnyDocument(function(layer) { return layer.name() == '.....' });
+  const droppedLayer = selected.droppedLayer;
+  const document = selected.targetDocument;
+
+  if (droppedLayer) {
+    debug('Possible text drop: yes!');
+    track('Dropped text');
+
+    const textLayer = droppedLayer;
+
+    const importedTextStyle = addOrUpdateSharedTextStyle(
+      document,
+      context.command,
+      typeStyle
+    );
+
+    // Set the layer name.
+    textLayer.setStringValue(typeStyle.name);
+
+    // Set the style of the layer according to the style data.
+    textLayer.style().setTextStyle(importedTextStyle.style().textStyle());
+    textLayer.style().setContextSettings(importedTextStyle.style().contextSettings());
+
+    // Link the layer to the shared style.
+    textLayer.style().setSharedObjectID(importedTextStyle.objectID());
+
+    // With round pixel values.
+    textLayer.frame().setTop(Math.round(textLayer.frame().top()));
+    textLayer.frame().setLeft(Math.round(textLayer.frame().left()));
+
+    // Select the new layer.
+    [textLayer select:true byExpandingSelection:false];
+
+    // Set the name of the layer if we have one.
+    if (typeStyle.name) {
+      textLayer.setName(typeStyle.name);
+    }
+
+  }
+}
+
+function handlePossibleImageDrop(command, imageData) {
+  // TODO: make sure image is not dropped inside another image group?
+
+  if (imageData.metadata && imageData.metadata.sketchSymbolId) {
+    displayImageDragHelpDialog();
+  }
+
+  debug('Possible image drop');
+  resetImportSession();
+  const extension = imageData.extension || getFileExtension(imageData.url)
+  const possibleLayerNames = possibleSketchLayerNamesFromURL(imageData.url, imageData.extension);
+  debug('Looking for selected layer with one of name:');
+  debug(possibleLayerNames);
+
+  const selection = droppedLayerFromAnyDocument(function(layer) {
+    const normalizedLayerName = layer.name().decomposedStringWithCanonicalMapping();
+    return possibleLayerNames.find(function(possibleLayerName) {
+      return NSString.stringWithString(possibleLayerName)
+        .decomposedStringWithCanonicalMapping()
+        .isEqualToString(normalizedLayerName);
+    });
+  });
+  const droppedLayer = selection.droppedLayer;
+  const document = selection.targetDocument;
+
+  if (droppedLayer) {
+    debug('Possible image drop: yes!');
+    var droppedType = 'Unknown';
+
+    switch(extension) {
+      case 'svg':
+        debug('Droped SVG');
+        track('Dropped Image', { imageType: 'SVG' });
+        // SVGs get dropped with a containing group already in place. So
+        // all we need to do is name that group and store data on it.
+        droppedLayer.setName(imageData.name);
+        droppedType = 'SVG';
+        break;
+
+      case 'png':
+      case 'jpeg':
+      case 'jpg':
+        debug('Drop Bitmap');
+        track('Dropped Image', { imageType: 'Bitmap' });
+        // PNGs get dropped as a bitmap layer with no containing group.
+        // So we have to add a group and set properties on that.
+        var parent = getParentLayer(droppedLayer);
+        var group = MSLayerGroup.new();
+        group.setName(imageData.name);
+        parent.addLayers([group]);
+        [MSLayerGroup moveLayers:[droppedLayer] intoGroup:group];
+        [group select:true byExpandingSelection:false];
+        group.resizeToFitChildrenWithOption(0);
+
+        droppedLayer.setName('Bitmap'); // Same as when Sketch inserts symbol.
+        droppedType = 'Bitmap';
+        break;
+
+      case 'ai':
+      case 'eps':
+        debug('Drop EPS');
+        track('Dropped Image', { imageType: 'EPS/Illustrator' });
+        // Assume that it was really a PNG that was dropped. We need to
+        // replace it with an imported EPS. First do everything the same as
+        // with a PNG.
+        var parent = getParentLayer(droppedLayer);
+        var group = MSLayerGroup.new();
+        group.setName(imageData.name);
+        parent.addLayers([group]);
+        [MSLayerGroup moveLayers:[droppedLayer] intoGroup:group];
+        [group select:true byExpandingSelection:false];
+        group.resizeToFitChildrenWithOption(0);
+
+        replaceGroupContents(
+          group,
+          importImage(imageData.url)
+        );
+        droppedType = 'EPS';
+        break;
+
+      case 'skla':
+        debug('Drop sketch layer');
+        track('Dropped Sketch layer');
+        // I don’t care what got dropped in the document. We need to remove it
+        // and import the new layer to the same location.
+        const dropParent = getParentLayer(droppedLayer);
+        var targetX = droppedLayer.frame().x();
+        var targetY = droppedLayer.frame().y();
+
+        dropParent.removeLayer(droppedLayer);
+
+        const sketchLayerURL = imageData.url.replace(/\.svg$/, '.skla');
+        const pasteboardLayers = loadSketchLayers(sketchLayerURL);
+        const layerToAdd = pasteboardLayers.layers().firstLayer();
+        const libraryContext = createLibraryContext(imageData, pasteboardLayers);
+        debug('Layer to add: ' + layerToAdd);
+
+        updateSharedObjectsForLayerTree(
+          command,
+          document,
+          libraryContext,
+          layerToAdd,
+          true
+        );
+
+        // Sketch may have created a symbols page behind the scenes but the
+        // default behavior in that case is for the page to be hidden from the
+        // user. That seems buggy. Selecting the page real quick and then going
+        // back to where the user started will reveal the Symbols page in the UI.
+        const symbolsPage = getPageByName(document, 'Symbols');
+        if (symbolsPage) {
+          const userPage = document.currentPage();
+          document.setCurrentPage(symbolsPage);
+          document.setCurrentPage(userPage);
+        }
+
+        // Add layer to document.
+        dropParent.addLayer(layerToAdd);
+        layerToAdd.frame().setX(targetX);
+        layerToAdd.frame().setY(targetY);
+
+        // If dropping an artboard, put it at the root of
+        // the page instead of inside a group or artboard.
+        if (layerToAdd.className() == 'MSArtboardGroup' && dropParent.className() != 'MSPage') {
+          const page = getParentLayer(dropParent, MSPage);
+          [layerToAdd moveToLayer:page beforeLayer:null];
+        }
+
+        // If the layer is dropped inside an artboard, but
+        // ends up outside the bounds of the artboard, move
+        // it up to the page level.
+        const artboard = layerToAdd.parentArtboard();
+        if (artboard && layerToAdd !== artboard) {
+          const artboardSize = artboard.frame().rect().size;
+          const relativeArtboardRect = CGRectMake(0, 0, artboardSize.width, artboardSize.height);
+
+          if (!CGRectIntersectsRect(relativeArtboardRect, layerToAdd.frame().rect())) {
+            const page = getParentLayer(dropParent, MSPage);
+            [layerToAdd moveToLayer:page beforeLayer:null];
+          }
+        }
+
+        // Set the name of the added layer.
+        layerToAdd.setName(imageData.name);
+
+        // Select the added layer, which mimicks the
+        // behavior of dragged in layers.
+        [layerToAdd select:true byExpandingSelection:false];
+
+        break;
+    }
+  }
+}
+
+function setSelectedSegment(segmentedControl, sectionLabel) {
+  for (var segmentIdx = 0; segmentIdx < segmentedControl.segmentCount(); segmentIdx++) {
+    var segmentLabel = segmentedControl.labelForSegment(segmentIdx);
+    if (segmentLabel.isEqualToString(sectionLabel)) {
+      [segmentedControl setSelected:true forSegment:segmentIdx];
+    } else {
+      [segmentedControl setSelected:false forSegment:segmentIdx];
+    }
+  }
+}
+
+
+function displayPopover(contentString, popoverWidth, targetRect, targetView, edge) {
+  var padding = 15;
+  var textLabel = NSTextField.new();
+  var textWidth = popoverWidth - (padding * 2);
+
+  // Calculate textHeight based on font and textWidth.
+  var textStorage = NSTextStorage.new().initWithString(contentString);
+  var textContainer = NSTextContainer.alloc().
+    initWithContainerSize(NSMakeSize(textWidth, 100000));
+  var layoutManager = [[NSLayoutManager alloc] init];
+  [layoutManager addTextContainer:textContainer];
+  [textStorage addLayoutManager:layoutManager];
+  [textStorage addAttribute:NSFontAttributeName value:[textLabel font]
+    range:NSMakeRange(0, [textStorage length])];
+  var paragraphStyle = NSMutableParagraphStyle.new();
+  paragraphStyle.lineSpacing = 2;
+  [textStorage addAttribute:NSParagraphStyleAttributeName value:paragraphStyle
+    range:NSMakeRange(0, [textStorage length])];
+  [textContainer setLineFragmentPadding:0];
+  [layoutManager glyphRangeForTextContainer:textContainer];
+  var textHeight = [layoutManager usedRectForTextContainer:textContainer].size.height;
+  var popoverHeight = textHeight + (padding * 2);
+
+  var view = NSView.alloc().initWithFrame(
+    NSMakeRect(0, 0, popoverWidth, popoverHeight)
+  );
+
+  textLabel.setFrame(NSMakeRect(padding, padding, textWidth, textHeight));
+  textLabel.setStringValue(contentString);
+  textLabel.selectable = false;
+  textLabel.bordered = false;
+  textLabel.drawsBackground = false;
+  textLabel.lineBreakMode = NSLineBreakByWordWrapping;
+  view.addSubview(textLabel);
+
+  var viewController = NSViewController.new()
+  viewController.view = view;
+
+  var popover = NSPopover.new();
+  popover.contentViewController = viewController;
+  popover.behavior = NSPopoverBehaviorSemitransient;
+  popover.contentSize = NSMakeSize(popoverWidth, popoverHeight);
+
+  [popover showRelativeToRect:targetRect ofView:targetView preferredEdge:edge];
+  return popover;
+}
+
+function displayAlert(options) {
+  const buttons = options.buttons || ['OK'];
+
+  const alert = NSAlert.new();
+  alert.setMessageText(options.title);
+  if (options.description) {
+    alert.setInformativeText(options.description);
+  }
+  alert.setAlertStyle(options.style == 'error' ? NSCriticalAlertStyle : NSWarningAlertStyle);
+
+  buttons.forEach(function(button) {
+    alert.addButtonWithTitle(button);
+  });
+
+  var doNotShowAgainCheckbox;
+  const defaultsKey = "BrandAIHasShownAlertFor" + options.optionToNotShowAgain;
+  if (options.optionToNotShowAgain) {
+    const hasBeenShownBefore =
+      NSUserDefaults.standardUserDefaults().boolForKey(defaultsKey);
+
+    if (hasBeenShownBefore) {
+      return;
+    } else {
+      doNotShowAgainCheckbox =
+        NSButton.alloc().initWithFrame(NSMakeRect(0, 0, 280, 18));
+      doNotShowAgainCheckbox.setButtonType(NSSwitchButton);
+      doNotShowAgainCheckbox.setTitle('Do not show this message again');
+      alert.setAccessoryView(doNotShowAgainCheckbox);
+    }
+  }
+
+  const responseCode = alert.runModal();
+
+  if (options.optionToNotShowAgain) {
+    const shouldNotShowAgain = doNotShowAgainCheckbox.state() == NSOnState;
+    if (shouldNotShowAgain) {
+      [[NSUserDefaults standardUserDefaults] setObject:true forKey:defaultsKey];
+    }
+  }
+
+  return responseCode;
+}
+
+function displayPrompt(options) {
+  const buttons = options.buttons || ['OK'];
+
+  const alert = NSAlert.new();
+  alert.setMessageText(options.title);
+
+  if (options.description) {
+    alert.setInformativeText(options.description);
+  }
+
+  buttons.forEach(function(button) {
+    alert.addButtonWithTitle(button);
+  });
+
+
+  var textField;
+  if (options.multiline) {
+    textField = NSTextView.alloc().initWithFrame(NSMakeRect(0, 0, 295, 40));
+    textField.scrollEnabled = true;
+    textField.showsVerticalScrollIndicator= true;
+    textField.text = options.defaultText || '';
+
+  } else {
+    textField = NSTextField.alloc().initWithFrame(NSMakeRect(0, 0, 295, 22));
+    textField.setStringValue(options.defaultText || '');
+  }
+
+  textField.setEditable(true);
+  alert.setAccessoryView(textField);
+  alert.window().setInitialFirstResponder(textField);
+
+  if (alert.runModal() == 1000) {
+    var text = (textField.class() == 'NSTextView') ? textField.string() : textField.stringValue();
+    return coerceString(text);
+  } else {
+    return null;
+  }
+}
+
+function displayReplaceImageDialog(nib, options) {
+  const app = NSApplication.sharedApplication();
+
+  nib.replaceImageSkipButton.setHidden(!options.allowSkip);
+
+  // Skip button action.
+  nib.attachTargetAndAction(nib.replaceImageSkipButton, function() {
+    app.stopModalWithCode(ImageReplaceResponse.Skip);
+    nib.replaceImageWindow.close();
+  });
+
+  // Cancel button action.
+  nib.attachTargetAndAction(nib.replaceImageCancelButton, function() {
+    app.stopModalWithCode(ImageReplaceResponse.Cancel);
+    nib.replaceImageWindow.close();
+  });
+
+  // Create new button action.
+  nib.attachTargetAndAction(nib.replaceImageCreateNewButton, function() {
+    app.stopModalWithCode(ImageReplaceResponse.CreateNew);
+    nib.replaceImageWindow.close();
+  });
+
+  // Replace buttion action.
+  nib.attachTargetAndAction(nib.replaceImageReplaceButton, function() {
+    app.stopModalWithCode(ImageReplaceResponse.Replace);
+    nib.replaceImageWindow.close();
+  });
+
+  // Set window title.
+  nib.replaceImageWindow.setTitle(
+    options.itemNumber + ' of ' + options.totalItems + ' Possible Matches'
+  );
+
+  // Show new image.
+  nib.replaceImageNewItemNameLabel.setStringValue(options.newItemName || '');
+  displayImageInWebView(
+    nib.replaceImageNewItemWebView,
+    options.newItemDataURL,
+    options.backgroundColor
+  );
+
+  // Show old image.
+  nib.replaceImageOldItemNameLabel.setStringValue(options.oldItemName || '');
+  displayImageInWebView(
+    nib.replaceImageOldItemWebView,
+    options.oldItemDataURL,
+    options.backgroundColor
+  );
+
+  return app.runModalForWindow(nib.replaceImageWindow);
+}
+
+function displayImageInWebView(webView, imageURL, backgroundColor) {
+  const html =
+    '<body style="background:' + (backgroundColor || 'white') + '; margin:0; padding:10px; box-sizing:border-box; justify-content:center; overflow:hidden; height:100%; display:flex; align-items:center;">' +
+    '<img src="' + imageURL + '" style="max-width:100%; max-height:100%">' +
+    '</body>';
+  [[webView mainFrame] loadHTMLString:html baseURL:null];
+}
+
+function loadReactAppInWebView(plugin, webView, appName, eventHandlers) {
+  // Load the local HTML file in the WebView, including the app name in the URL
+  // query. We expect the code in index.html to take over at that point,
+  // loading the correct app.
+  const indexURL = plugin.urlForResourceNamed('Web/index.html');
+  var queryString = '?appName=' + appName;
+  for (var eventHandler in eventHandlers) {
+    queryString += '&nativeHandlers=' + eventHandler;
+  }
+  const indexURLWithAppQuery =
+    NSURL.URLWithString(indexURL.absoluteString() + queryString);
+  const request = [NSURLRequest
+    requestWithURL:indexURLWithAppQuery
+    cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
+    timeoutInterval:60];
+  webView.mainFrame().loadRequest(request);
+
+  // We will return a proxy object that can interface with the React app.
+  const Proxy = function() {
+    this.pendingCallbacks = {};
+  };
+  Proxy.prototype._resolveAsync = function(id, value) {
+    this.pendingCallbacks[id](null, value);
+  };
+  Proxy.prototype._rejectAsync = function(id, reason) {
+    this.pendingCallbacks[id](reason);
+  };
+
+  const proxy = new Proxy();
+
+  if (eventHandlers) {
+    webView.setUIDelegate(createCocoaObject({
+      // This is a hack to receive data from the WebView since
+      // windowScriptObject doesn’t work in this direction.
+      'webView:setStatusText:': function(webView, statusText) {
+        if (!statusText || statusText == '') {
+          // Empty strings are expected when the view first loads; just ignore it.
+          return;
+        }
+        try {
+          var data = JSON.parse(statusText);
+        } catch (e) {
+          debug("Unable to parse status text \"" + statusText + "\"");
+          return;
+        }
+
+        // We got some data from the web view. What to do with it?
+        if (data.eventType == 'functionCall') {
+
+          const handler = eventHandlers[data.name];
+          if (!handler) {
+            debug('No native function "' + data.name + '".');
+
+          } else {
+            const args = data.args;
+            // Try to call the function with the given arguments.
+            var result;
+            try {
+              result = handler.apply(null, args);
+            } catch (err) {
+              if (data.id) {
+                sendDataToWebView(webView, {
+                  eventType: 'asyncError',
+                  id: data.id,
+                  reason: err.message
+                });
+              }
+            }
+            if (data.id) {
+              sendDataToWebView(webView, {
+                eventType: 'asyncResult',
+                id: data.id,
+                value: result
+              });
+            }
+          }
+
+        } else if (data.eventType == 'asyncResult') {
+          proxy._resolveAsync(data.id, data.value);
+
+        } else if (data.eventType == 'asyncError') {
+          proxy._rejectAsync(data.id, data.reason);
+
+        } else if (data.eventType == 'initialize') {
+          data.functions.forEach(function(func) {
+            Proxy.prototype[func] = function(/*arguments*/) {
+              debug('Proxy function "' + func + '".');
+              const args = Array.prototype.slice.call(arguments);
+              const lastArg = args[args.length - 1];
+              var asyncID;
+              if (lastArg && typeof lastArg == 'function') {
+                args.pop();
+                asyncID = Math.random().toString(36).substr(2, 10);
+                this.pendingCallbacks[asyncID] = lastArg;
+              }
+              sendDataToWebView(webView, {
+                eventType: 'functionCall',
+                name: func,
+                id: asyncID,
+                args: args
+              });
+            };
+          });
+          if (eventHandlers.onReady) {
+            eventHandlers.onReady();
+          }
+
+        } else if (data.eventType == 'debug') {
+          debug(data.message);
+        }
+      }
+    }));
+  }
+
+  return proxy;
+}
+
+function getPreviouslyImportedColors(documentData) {
+  return mutableDictionaryForDocumentKey(documentData, 'importedColors')
+}
+
+function storeImportedColors(command, documentData, newColors) {
+  const allColors = getPreviouslyImportedColors(documentData);
+  allColors.addEntriesFromDictionary(newColors);
+
+  // Filter out the colors that don’t appear in this document.
+  const documentColors = {};
+  $.forEach(documentData.assets().colors(), function(color) {
+    const hash = hashForMSColor(color);
+    if (allColors[hash]) {
+      documentColors[hash] = true;
+    }
+  });
+
+  [command setValue:documentColors forKey:'importedColors'
+    onDocument:documentData];
+}
+
+function importColors(command, document, styleData) {
+  debug('Importing colors…');
+  var assets = document.documentData().assets();
+
+  const previouslyImportedColors =
+    getPreviouslyImportedColors(document.documentData());
+
+  var designLibraryColors = [];
+  (styleData.globalAssets.colors || []).forEach(function(color){
+    designLibraryColors.push(color.value);
+  });
+
+  // The new colors to put in the UI. All of them, not just the ones being
+  // added now.
+
+  const newColors = NSClassFromString('MSArray')
+    ? MSArray.new() // After Sketch 3.9 there is no more MSArray.
+    : NSMutableArray.arrayWithCapacity(30);
+  const importedColors = {};
+  designLibraryColors.forEach(function(colorString) {
+    const color = MSColorFromString(colorString);
+    const colorHash = hashForMSColor(color);
+
+    // All colors from styleguide should be included in the new colors.
+    newColors.addObject(color);
+
+    // Remember the colors that came from the styleguide so we can recognize
+    // them later. Serialize color to string in the same we will do it later
+    // when getting it from Sketch.
+    importedColors[colorHash] = true;
+  });
+
+  // Now also include any of the colors that were added by the user and not
+  // imported by us.
+  $.forEach(assets.colors(), function(existingColor) {
+    const hash = hashForMSColor(existingColor);
+    if (!previouslyImportedColors[hash]) {
+      newColors.addObject(existingColor);
+    }
+  });
+
+  debug(newColors);
+  assets.setColors(newColors);
+  storeImportedColors(command, document.documentData(), importedColors);
+}
+
+// Returns an object that maps each shared text style in the document in the
+// following way:
+// Brand.ai Type Style ID -> Shared Text Style
+function getPreviouslyImportedSharedTextStyles(document) {
+  // Relationship is stored as Sketch Shared ID -> Brand.ai Type Style ID
+  // because there can be only one linked Brand.ai Type Style for each shared
+  // style but there can be multiple shared styles across different Sketch
+  // documents all linked to the same Brand.ai style. This reverses it to
+  // Brand.ai Type Style ID -> Sketch Shared ID (for the document) so we can do
+  // lookups based on the Brand.ai ID.
+  const results = {};
+
+  const brandAIIDsByTextStyleID =
+    getPreviouslyImportedSharedTextStylesMap(document.documentData());
+
+  const sharedTextStyles = document.documentData()
+    .layerTextStyles().objects();
+
+  $.forEach(sharedTextStyles, function(sketchTextStyle) {
+    var brandAIID = brandAIIDsByTextStyleID[sketchTextStyle.objectID()];
+    if (brandAIID) {
+      results[brandAIID] = sketchTextStyle;
+    }
+  });
+
+  return results;
+}
+
+// Returns a dictionary mapping like this:
+// Sketch Shared Text Style ID -> Brand.ai Type Style ID
+function getPreviouslyImportedSharedTextStylesMap(documentData) {
+  return mutableDictionaryForDocumentKey(documentData, 'importedTypeStyles')
+}
+
+function storeImportedSharedTextStylesMap(command, documentData, newMapping) {
+  const mapping = getPreviouslyImportedSharedTextStylesMap(documentData);
+  mapping.addEntriesFromDictionary(newMapping);
+
+  // Filter out IDs that don’t apply to this document.
+  const filteredMapping = {};
+  $.forEach(documentData.layerTextStyles().objects(), function(sharedStyle) {
+    const sharedStyleID = sharedStyle.objectID();
+    const brandAITypeStyleID = mapping[sharedStyleID];
+    if (brandAITypeStyleID) {
+      filteredMapping[sharedStyleID] = brandAITypeStyleID;
+    }
+  });
+
+  [command setValue:filteredMapping
+    forKey:'importedTypeStyles' onDocument:documentData];
+}
+
+// Returns an object that maps each shared style in the document in the
+// following way:
+// Brand.ai Shared Style ID -> Shared Style
+function getPreviouslyImportedSharedLayerStyles(document) {
+  const results = {};
+
+  const brandAIIDsByTextStyleID =
+    getPreviouslyImportedSharedLayerStylesMap(document.documentData());
+
+  const sharedLayerStyles = document.documentData()
+    .layerStyles().objects();
+
+  $.forEach(sharedLayerStyles, function(sketchLayerStyle) {
+    const brandAIID = brandAIIDsByTextStyleID[sketchLayerStyle.objectID()];
+    if (brandAIID) {
+      results[brandAIID] = sketchLayerStyle;
+    }
+  });
+
+  return results;
+}
+
+// Returns a dictionary mapping like this:
+// Sketch Shared Style ID -> Brand.ai ID
+function getPreviouslyImportedSharedLayerStylesMap(documentData) {
+  return mutableDictionaryForDocumentKey(documentData, 'importedLayerStyles');
+}
+
+function storeImportedSharedLayerStylesMap(command, documentData, newMapping) {
+  const mapping = getPreviouslyImportedSharedLayerStylesMap(documentData);
+  mapping.addEntriesFromDictionary(newMapping);
+
+  // Filter out IDs that don’t apply to this document.
+  const filteredMapping = {};
+  $.forEach(documentData.layerStyles().objects(), function(sharedStyle) {
+    const sharedStyleID = sharedStyle.objectID();
+    const brandAISharedStyleID = mapping[sharedStyleID];
+    if (brandAISharedStyleID) {
+      filteredMapping[sharedStyleID] = brandAISharedStyleID;
+    }
+  });
+
+  [command
+    setValue:filteredMapping
+    forKey:'importedLayerStyles'
+    onDocument:documentData];
+}
+
+
+function importTypeStyles(command, document, styleData, onlyExisting) {
+  debug('Importing type styles…');
+
+  const previouslyImportedTextStyles = getPreviouslyImportedSharedTextStyles(document);
+
+  (styleData.globalAssets.typeStyles || []).forEach(function(typeStyle) {
+    if (!onlyExisting || previouslyImportedTextStyles[typeStyle._id]) {
+      addOrUpdateSharedTextStyle(document, command, typeStyle);
+    }
+  });
+}
+
+function importLayerStyles(command, document, styleData, onlyExisting) {
+  debug('Importing layer styles…');
+
+  const previouslyImportedSharedStyles = getPreviouslyImportedSharedLayerStyles(document);
+
+  (styleData.globalAssets.sharedStyles || []).forEach(function(sharedStyle) {
+    if (!onlyExisting || previouslyImportedSharedStyles[sharedStyle._id]) {
+      addOrUpdateSharedLayerStyle(document, command, sharedStyle);
+    }
+  });
+}
+
+function importImages(command, document, imageType, styleData, onlyExisting) {
+  debug('Importing ' + imageType + '...');
+  const librarySymbols = allLibrarySymbolsIndexedBySymbolID(styleData);
+  const librarySymbolsBySize = allLibrarySymbolsIndexedBySize(styleData);
+  const existingSymbolsMasters = getSymbolsMastersByID(document);
+
+  // const category = constants.IMAGE_CATS[imageType];
+  (styleData.globalAssets[imageType] || []).forEach(function(image) {
+    // Only import layers that are actual Sketch symbols (not regular
+    // layers). Note: in the future, we may allow people to override this
+    // e.g. for their SVG icons.
+    if (image.metadata && image.metadata.sketchSymbolId) {
+
+      //either import all or the symbol existing in the document
+      if (!onlyExisting || existingSymbolsMasters[image.metadata.sketchSymbolId]) {
+        queueJob(function() {
+          const sketchLayerFormat = getSketchLayerFormat(image);
+          if (sketchLayerFormat) {
+            const pasteboardLayers = loadSketchLayers(sketchLayerFormat.url);
+            if (!pasteboardLayers) {
+              return;
+            }
+            const libraryContext = {
+              sharedObjects: image.metadata.sharedObjects || {},
+              pasteboardLayers: pasteboardLayers,
+              librarySymbols: librarySymbols,
+              librarySymbolsBySize: librarySymbolsBySize
+            };
+            addOrUpdateSymbolByID(
+              command,
+              document,
+              libraryContext,
+              image.metadata.sketchSymbolId
+            );
+            addOrUpdateOverrideSymbolsForInstance(
+              command,
+              document,
+              libraryContext,
+              pasteboardLayers.layers().firstLayer()
+            );
+          }
+        });
+      }
+    }
+  });
+}
+
+function exportDataForArtboard(document, layer, format) {
+  format = format || 'svg';
+
+  const scale = 1; // See also 2X-PNG-ADJUST
+  var exportRequest;
+  if (MSExportRequest.exportRequestsFromExportableLayer) {
+    exportRequest = MSExportRequest.exportRequestsFromExportableLayer(layer)[0];
+    exportRequest.setScale(scale);
+  } else {
+    const rect = layer.absoluteInfluenceRect();
+    exportRequest = [MSExportRequest requestWithRect:rect scale:scale];
+    exportRequest.configureForLayer(layer);
+  }
+  exportRequest.setSaveForWeb(true);
+
+  const tempFilePath = getTempFilePath('Layer-export-' + layer.objectID(), format);
+  [document saveArtboardOrSlice:exportRequest toFile:tempFilePath];
+
+  const imageData = NSData.dataWithContentsOfFile(tempFilePath);
+  [[NSFileManager defaultManager] removeItemAtPath:tempFilePath error:null];
+  return imageData;
+}
+
+function MSColorFromString(string) {
+  if (/^(#|rgb\b)/.test(string)) {
+    // Handle hex and rgb() formats.
+    return mutableSketchObject([MSImmutableColor colorWithSVGString:string]);
+  } else if (/[0-9a-f]{6}/i.test(string)) {
+    // Handle hex colors without a leading # mark.
+    return mutableSketchObject([MSImmutableColor colorWithSVGString:('#' + string)]);
+  } else {
+    // Handle rgba() format, which is surprisingly not supported by Sketch’s
+    // MSColor colorWithSVGString:
+    var whitespace = '\\s*';
+    var number = '(\\d+(\\.\\d+)?)'; // Note: surrounded by capture group.
+    var comma = ',';
+    var pattern = [
+      'rgba\\(',
+      whitespace, number, comma,
+      whitespace, number, comma,
+      whitespace, number, comma,
+      whitespace, number, whitespace,
+      '\\)'
+    ].join('');
+    var match = (new RegExp(pattern)).exec(string);
+    if (match) {
+      var red   = parseFloat(match[1]) / 255;
+      var green = parseFloat(match[3]) / 255;
+      var blue  = parseFloat(match[5]) / 255;
+      var alpha = parseFloat(match[7]);
+      return [MSColor colorWithRed:red green:green blue:blue alpha:alpha];
+    }
+  }
+  // Fall back on black.
+  return [MSColor colorWithRed:0 green:0 blue:0 alpha:1];
+}
+
+function NSColorFromString(s) {
+  return NSColorFromMSColor(MSColorFromString(s));
+}
+
+function NSColorFromMSColor(msColor) {
+  var h = msColor.hue();
+  var s = msColor.saturation();
+  var b = msColor.brightness();
+  var a = msColor.alpha();
+  return [NSColor colorWithCalibratedHue:h saturation:s brightness:b alpha:a];
+}
+
+function hashForMSColor(msColor) {
+  msColor = msColor.immutableModelObject();
+  var hash = msColor.hexValue()
+  if (msColor.alpha() != 1) {
+    var alphaString = Math.floor(msColor.alpha() * 255).toString(16).toUpperCase();
+    if (alphaString.length === 1) {
+      alphaString = '0' + alphaString;
+    }
+    hash = hash + alphaString;
+  }
+  return hash;
+}
+
+function stringForMSColor(msColor) {
+  msColor = msColor.immutableModelObject();
+
+  var valuesString = [
+	  Math.round(msColor.red() * 255),
+	  Math.round(msColor.green() * 255),
+	  Math.round(msColor.blue() * 255)
+  ].join(', ');
+
+
+  if (msColor.alpha() != 1) {
+    debug('rgba(' + valuesString + ', ' + msColor.alpha().toString().substr(0, 5) + ')');
+    return 'rgba(' + valuesString + ', ' + msColor.alpha().toString().substr(0, 5) + ')';
+  } else {
+    return 'rgb(' + valuesString + ')';
+  }
+}
+
+function isPagesApp(appName){
+  return appName == 'Artboards';
+}
+
+
+function getLayersColors(layers) {
+  const colorsSet = NSMutableSet.new();
+  $.forEach(layers, function(layer) {
+    const properties = colorPropertiesForLayer(layer);
+    if (properties) {
+      properties.forEach(function(property) {
+        const color = getColorPropertyOnLayer(layer, property);
+        if (color) {
+          const hash = hashForMSColor(color);
+          colorsSet.addObject(color);
+        }
+      });
+    }
+  });
+  return colorsSet.allObjects();
+}
+
+function updateLayerColor(layer, color, preferBorders) {
+  if (layer && layer.class && layer.class() == 'MSLayerGroup') {
+
+    // For groups, recurse through children.
+    var anyLayersWereStyled = false;
+    $.forEach(layer.layers(), function(childLayer) {
+      const anyLocalLayersWereStyled = updateLayerColor(childLayer, color);
+      anyLayersWereStyled = anyLayersWereStyled || anyLocalLayersWereStyled;
+    });
+    return anyLayersWereStyled;
+
+  } else {
+
+    // For non-groups, get the default color property to change, and change it.
+    const property = defaultChangeableColorPropertyForLayer(layer, preferBorders);
+    if (property) {
+      return updateColorPropertyOnLayer(layer, property, color);
+    } else {
+      return false;
+    }
+  }
+}
+
+function defaultChangeableColorPropertyForLayer(layer, preferBorders) {
+  var properties = colorPropertiesForLayer(layer, preferBorders);
+  if (properties) {
+    properties.sort(function(a, b) {
+      return b.weight - a.weight;
+    });
+    debug(properties);
+    return properties[0];
+  }
+  return;
+}
+
+function colorPropertiesForLayer(layer, preferBorders) {
+  if (layer && layer.class) {
+
+    const borderPreferenceWeight = preferBorders ? 120 : 0;
+
+    switch (coerceString(layer.class())) {
+
+      case 'MSTextLayer':
+        return [
+          { property: 'textColor', weight: 5 },
+          ...fillColorPropertiesForLayer(layer, 0, function() { return 0; }),
+          ...borderColorPropertiesForLayer(layer, 0 + borderPreferenceWeight, function() {
+            return 0 + borderPreferenceWeight;
+          })
+        ];
+
+      case 'MSShapeGroup':
+        return [
+          ...fillColorPropertiesForLayer(layer, 0, function(fill, fillIdx, fills) {
+            var weight = 10;
+            if (fill.fillType() == 0) { weight +=   10 }
+            if (!fill.isEnabled())    { weight += -100 }
+            weight += fillIdx / fills.count();
+            return weight;
+          }),
+          ...borderColorPropertiesForLayer(layer, -10 + borderPreferenceWeight, function(border, borderIdx, borders) {
+            var weight = 0 + borderPreferenceWeight;
+            if (border.fillType() == 0) { weight +=    2 }
+            if (!border.isEnabled())    { weight += -100 }
+            weight += Math.min(border.thickness(), 100) / 100;
+            weight += borderIdx / borders.count();
+            return weight;
+          })
+        ];
+    }
+  }
+}
+
+function fillColorPropertiesForLayer(layer, newFillWeight, weightForFill) {
+  var properties = [];
+  $.forEach(layer.style().fills(), function(fill, fillIdx, fills) {
+    properties.push({
+      property: 'fill',
+      weight: weightForFill(fill, fillIdx, fills),
+      id: fill.objectID()
+    });
+  });
+  if (properties.length == 0) {
+    properties.push({
+      property: 'newFill',
+      weight: newFillWeight
+    });
+  }
+  return properties;
+}
+
+function borderColorPropertiesForLayer(layer, newBorderWeight, weightForBorder) {
+  var properties = [];
+  $.forEach(layer.style().borders(), function(border, borderIdx, borders) {
+    properties.push({
+      property: 'border',
+      weight: weightForBorder(border, borderIdx, borders),
+      id: border.objectID()
+    });
+  });
+  if (properties.length == 0) {
+    properties.push({
+      property: 'newBorder',
+      weight: newBorderWeight
+    });
+  }
+  return properties;
+}
+
+function getColorPropertyOnLayer(layer, property) {
+  switch (property.property) {
+    case 'fill':
+      const fill = getStyleById(layer.style().fills(), property.id);
+      return fill ? fill.color() : void 0;
+
+    case 'border':
+      const border = getStyleById(layer.style().borders(), property.id);
+      return border ? border.color() : void 0;
+
+    case 'textColor':
+      return layer.textColor();
+  }
+}
+
+function updateColorPropertyOnLayer(layer, property, newColorString) {
+  switch (property.property) {
+    case 'fill':
+      var fill = getStyleById(layer.style().fills(), property.id);
+      if (fill) {
+        fill.fillType = 0;
+        fill.isEnabled = true;
+        fill.color = MSColorFromString(newColorString);
+      }
+      return true;
+
+    case 'border':
+      var border = getStyleById(layer.style().borders(), property.id);
+      if (border) {
+        border.fillType = 0;
+        border.isEnabled = true;
+        border.color = MSColorFromString(newColorString);
+      }
+      return true;
+
+    case 'textColor':
+      layer.textColor = MSColorFromString(newColorString);
+      return true;
+
+    case 'newFill':
+      var fill = layer.style().addStylePartOfType(0);
+      fill.fillType = 0;
+      fill.color = MSColorFromString(newColorString);
+      return true;
+
+    case 'newBorder':
+      var border = layer.style().addStylePartOfType(1);
+      border.fillType = 0;
+      border.color = MSColorFromString(newColorString);
+      return true;
+  }
+
+  return false;
+}
+
+function getStyleById(collection, id) {
+  return $.find(collection, function(style) {
+    return style.objectID().isEqualToString(id);
+  });
+}
+
+function getParentLayer(layer, parentClass) {
+  // Default to any MSLayer.
+  parentClass = parentClass || MSLayer;
+
+  return $.find(layer.ancestors().reverseObjectEnumerator().allObjects(), function(ancestor) {
+    // Some versions of Sketch return ancestors() with the layer itself in the
+    // list of ancestors, so we have to check that the ancestor is not the
+    // input layer.
+    return ancestor.class().isSubclassOfClass(parentClass) &&
+      ancestor !== layer;
+  });
+}
+
+function traverseLayerTree(layer, func) {
+  const visitedLayers = NSMutableSet.new();
+
+  function visitLayer(layer, isInsideSymbol, isRoot) {
+    if (visitedLayers.containsObject(layer)) {
+      // Skip layers already visited. This can happen when
+      // a layer contains multiple instances of the same
+      // symbol.
+      return;
+    }
+    visitedLayers.addObject(layer);
+
+    // Look inside symbols.
+    if (layer.className() == 'MSSymbolInstance') {
+      layer = layer.symbolMaster();
+      isInsideSymbol = !isRoot;
+    }
+
+    $.forEach(layer.children(), function(child) {
+
+      if (child.className() == 'MSSymbolInstance') {
+        // Recurse on symbol instances.
+        visitLayer(child, isInsideSymbol, false);
+      } else {
+        // For other layers, call the user provided function.
+        func(child, !!isInsideSymbol);
+      }
+
+    });
+  }
+
+  visitLayer(layer, false, true);
+}
+
+function applyToAllImages(styleData, func) {
+
+  for (var imageType in constants.IMAGE_CATS) {
+    if (styleData.globalAssets[imageType]) {
+      styleData.globalAssets[imageType].forEach(function(image) {
+        func(image, imageType, image.sectionId);
+      });
+    }
+  }
+}
+
+
+/*
+ * See Documentation:
+ * https://developer.apple.com/library/mac/documentation/Cocoa/Reference/ApplicationKit/Classes/NSFontManager_Class/#//apple_ref/occ/instm/NSFontManager/convertWeight:ofFont:
+ *
+ * And implementation in WebKit at
+ * https://github.com/WebKit/webkit/blob/66e68cd8d7bf4ea1cf52f31ed9cb242f83ea5b57/Source/WebCore/platform/graphics/mac/FontCacheMac.mm#L160
+ */
+function CSSWeightFromAppleWeight(weight) {
+  if (weight == 1)
+    return 1;
+  if (weight == 2)
+    return 2;
+  if (weight <= 4)
+    return 3;
+  if (weight == 5)
+    return 4;
+  if (weight == 6)
+    return 5;
+  if (weight <= 8)
+    return 6;
+  if (weight == 9)
+    return 7;
+  if (weight <= 11)
+    return 8;
+  return 9;
+}
+
+/*
+ * See Documentation:
+ * https://developer.apple.com/library/mac/documentation/Cocoa/Reference/ApplicationKit/Classes/NSFontManager_Class/#//apple_ref/occ/instm/NSFontManager/convertWeight:ofFont:
+ * */
+function appleWeightFromFVDWeight(weight) {
+  return [
+    0,  // 0 index; not used
+    2,  // W1. ultralight
+    3,  // W2. extralight
+    4,  // W3. light
+    5,  // W4. semilight
+    6,  // W5. medium
+    8,  // W6. semibold
+    9,  // W7. bold
+    10, // W8. extrabold
+    12  // W9. ultrabold
+  ][weight];
+}
+
+function namedWeightFromFVDWeight(weight) {
+  return [
+    '',             // 0 index; not used
+    'Thin',         // 1
+    'Extra-Light',  // 2
+    'Light',        // 3
+    'Regular',      // 4
+    'Medium',       // 5
+    'Semi-Bold',    // 6
+    'Bold',         // 7
+    'Extra-Bold',   // 8
+    'Ultra-Bold'    // 9
+  ][weight];
+}
+
+function NSFontFromBrandAITypeStyle(typeStyle) {
+  if (!typeStyle.fontFamily) {
+    return;
+  }
+
+  const fontManager = NSFontManager.sharedFontManager();
+  const availableMembers = getAvailableMembersOfFontFamily(typeStyle.fontFamily);
+  const fontMembers = availableMembers.members;
+  const lookupFamilyName = availableMembers.familyName;
+
+  const targetFVDWeight = parseInt((typeStyle.fontVariant || '')[1], 10) || 4;
+  const targetFVDStyle = (typeStyle.fontVariant || '')[0] || 'n';
+  const targetIsItalic = (targetFVDStyle == 'i');
+  const targetWeightName = namedWeightFromFVDWeight(targetFVDWeight);
+
+  var result;
+  if (fontMembers) {
+    $.forEach(fontMembers, function(member) {
+      // This is a weird API. The values arrays we index into to get font data.
+      const psName      = member.objectAtIndex(constants.INDEX.fontPSName);
+      const appleWeight = member.objectAtIndex(constants.INDEX.fontWeight);
+      const traits      = member.objectAtIndex(constants.INDEX.fontTraits);
+      const faceName    = member.objectAtIndex(constants.INDEX.fontFaceName); // E.g. 'Roman', 'Italic', etc.
+
+
+      // Match with extrapolated FVD.
+      const memberFVD = fontVariantFromFamilyMemberData(psName, appleWeight, traits);
+      if (memberFVD == typeStyle.fontVariant) {
+        result = NSFontFromPostScriptName(psName, typeStyle.fontSize);
+        return false;
+      }
+
+      // Match with extrapolated weight name.
+      const memberWeightName = faceName.split(' ')[0];
+      const memberFaceIsItalic = isFontFaceItalic(traits, faceName);
+      if (memberWeightName == targetWeightName &&
+          memberFaceIsItalic == targetIsItalic) {
+        result = NSFontFromPostScriptName(psName, typeStyle.fontSize);
+        return false;
+      }
+
+    });
+
+    // Last resort: Get font based on generic mapping from FVD weight.
+    if (!result) {
+      result = [fontManager
+        fontWithFamily:lookupFamilyName
+        traits:(targetFVDStyle === 'i' ? NSItalicFontMask : 0)
+        weight:appleWeightFromFVDWeight(targetFVDWeight)
+        size:(typeStyle.fontSize)];
+    }
+
+  }
+
+  return result;
+}
+
+// Special cases for known issues with fonts.
+function overrideAppleFontWeight(psName) {
+  switch (coerceString(psName)) {
+    case 'HelveticaNeue-Thin':
+    case 'HelveticaNeueLTPro-Th':
+    case 'Oswald-ExtraLight':
+      return 2;
+  }
+}
+
+function fontVariantFromNSFont(font) {
+  var appleWeight = NSFontManager.sharedFontManager().weightOfFont(font);
+  appleWeight = overrideAppleFontWeight(font.fontName()) || appleWeight;
+  const traits = font.fontDescriptor().symbolicTraits();
+  return fontVariantFromFamilyMemberData(font.fontName(), appleWeight, traits);
+}
+
+function fontVariantFromFamilyMember(member) {
+  return fontVariantFromFamilyMemberData(
+    member.objectAtIndex(constants.INDEX.fontPSName),
+    member.objectAtIndex(constants.INDEX.fontWeight),
+    member.objectAtIndex(constants.INDEX.fontTraits)
+  );
+}
+
+function fontVariantFromFamilyMemberData(psName, appleWeight, fontTraits) {
+  appleWeight = overrideAppleFontWeight(psName) || appleWeight;
+  const cssWeight = CSSWeightFromAppleWeight(appleWeight);
+  const isItalic = isFontFaceItalic(fontTraits, psName);
+  return (isItalic ? 'i' : 'n') + cssWeight;
+}
+
+function fontVariantsInFontFamily(family) {
+  const fontManager = NSFontManager.sharedFontManager();
+
+  // Note: availableMembersOfFontFamily will return null if there are no matches.
+  const members = fontManager.availableMembersOfFontFamily(family);
+  const variants = {};
+  if (members) {
+    $.forEach(members, function(member) {
+      const variant = fontVariantFromFamilyMember(member);
+      variants[variant] = true;
+    });
+  }
+  return Object.keys(variants);
+}
+
+function isFontFaceItalic(fontTraits, faceName) {
+  // Cocoa does not set the italic traits for HelveticaLightItalic and maybe
+  // others. See Mozilla bug 611855. So we check the face name endings as
+  // well as the trait.
+  return (fontTraits & NSItalicFontMask) ||
+    faceName.hasSuffix('Italic') ||
+    faceName.hasSuffix('Oblique');
+}
+
+function NSFontFromPostScriptName(psName, size) {
+  // Look up font using PostScript name (which can only be done using a
+  // NSFontDescriptor.
+  const fontDescriptor = NSFontDescriptor.fontDescriptorWithFontAttributes({
+    NSFontNameAttribute: psName
+  });
+  const result = [fontDescriptor matchingFontDescriptorWithMandatoryKeys:null];
+  return [NSFont fontWithDescriptor:result size:size];
+}
+
+//represents the opacity and the blending of the MSLayer
+function sketchContextSettingsFromBrandAIObject(brandaiObject) {
+
+  var contextSettings = MSGraphicsContextSettings.new();
+  if (brandaiObject.opacity) {
+    contextSettings.setOpacity(brandaiObject.opacity);
+  }
+  return contextSettings;
+}
+
+function sketchTextStyleFromBrandAITypeStyle(typeStyle) {
+  var font = NSFontFromBrandAITypeStyle(typeStyle);
+  if (!font) {
+    // Font object will be nil if the family is not available on the system, so
+    // this is a fallback.
+    font = [NSFont fontWithName:'Helvetica' size:(typeStyle.fontSize)];
+  }
+  const paragraphStyle = NSMutableParagraphStyle.new();
+  if (typeStyle.lineHeight) {
+    paragraphStyle.minimumLineHeight = typeStyle.lineHeight;
+    paragraphStyle.maximumLineHeight = typeStyle.lineHeight;
+  }
+  if (typeStyle.paragraphSpacing) {
+    paragraphStyle.paragraphSpacing = typeStyle.paragraphSpacing;
+  }
+  paragraphStyle.setAlignment({
+    left:       NSTextAlignmentLeft,
+    right:      NSTextAlignmentRight,
+    center:     NSTextAlignmentCenter,
+    justify:    NSTextAlignmentJustified,
+    start:      NSTextAlignmentNatural
+  }[typeStyle.alignment] || NSTextAlignmentNatural);
+
+  const newStyleAttrs = {
+    NSColor:          NSColorFromString(typeStyle.textColor),
+    NSFont:           font,
+    NSParagraphStyle: paragraphStyle
+  };
+  if (typeStyle.letterSpacing) {
+    newStyleAttrs.NSKern = typeStyle.letterSpacing;
+  }
+  if (typeStyle.underline) {
+    newStyleAttrs.NSUnderline = NSUnderlineStyleSingle;
+  }
+  if (typeStyle.strikethrough) {
+    newStyleAttrs.NSStrikethrough = NSUnderlineStyleSingle;
+  }
+  if (typeStyle.uppercase) {
+    newStyleAttrs.MSAttributedStringTextTransformAttribute = 1;
+  } else if (typeStyle.lowercase) {
+    newStyleAttrs.MSAttributedStringTextTransformAttribute = 2;
+  }
+
+
+  return MSTextStyle.styleWithAttributes(newStyleAttrs);
+}
+
+function brandAITypeStyleFromSketchSharedStyle(sharedStyle) {
+
+  const style = sharedStyle.style();
+  const textStyle = style.textStyle();
+  const textAttrs = textStyle.attributes();
+  const font = textAttrs.NSFont;
+  const color = textAttrs.NSColor;
+  const paragraphStyle = textAttrs.NSParagraphStyle || NSParagraphStyle.new();
+  const contextSettings = style.contextSettings && style.contextSettings();
+
+  const alignmentMap = {};
+  alignmentMap[NSTextAlignmentLeft]       = 'left';
+  alignmentMap[NSTextAlignmentRight]      = 'right';
+  alignmentMap[NSTextAlignmentCenter]     = 'center';
+  alignmentMap[NSTextAlignmentJustified]  = 'justify';
+  alignmentMap[NSTextAlignmentNatural]    = 'start';
+
+  return {
+    objectID:         coerceString(sharedStyle.objectID()),
+    name:             coerceString(sharedStyle.name()),
+    fontFamily:       coerceString(font.familyName()),
+    fontVariant:      fontVariantFromNSFont(font),
+    fontSize:         font.pointSize(),
+    textColor:        stringForMSColor(MSColor.colorWithNSColor(color)),
+    //backgroundColor:  'white',
+    sampleText:       'The quick brown fox jumps over the lazy dog.',
+    lineHeight:       paragraphStyle.minimumLineHeight() || void 0,
+    paragraphSpacing: paragraphStyle.paragraphSpacing() || void 0,
+    alignment:        alignmentMap[paragraphStyle.alignment()] || 'left',
+    letterSpacing:    coerceNumber(textAttrs.NSKern) || void 0,
+    underline:        coerceBool(textAttrs.NSUnderline),
+    strikethrough:    coerceBool(textAttrs.NSStrikethrough),
+    uppercase:        textAttrs.MSAttributedStringTextTransformAttribute == 1 ? true : false,
+    lowercase:        textAttrs.MSAttributedStringTextTransformAttribute == 2 ? true : false,
+    opacity:          contextSettings ? coerceNumber(contextSettings.opacity()) : void 0
+  };
+}
+
+function sketchStyleFromBrandAISharedStyle(sharedStyle) {
+  const data = dataFromURL(sharedStyle.sketchArchiveUrl);
+  const immutableStyle = archive.sketchObjectFromArchiveData(data);
+  return mutableSketchObject(immutableStyle);
+}
+
+function brandAISharedStyleFromSketchSharedStyle(sharedStyle) {
+  return {
+    objectID: sharedStyle.objectID(),
+    name: sharedStyle.name()
+  };
+}
+
+// MSPasteboardLayers is an object that Sketch uses to paste layers into a
+// document. This function constructs a new MSPasteboardLayers from just a
+// MSSymbolMaster. This mimics the user having copied an instance of that
+// master to the pasteboard.
+function pasteboardLayersFromSymbolMaster(symbolMaster) {
+  const pboardLayers = MSPasteboardLayers.new();
+  const symbols = NSMutableDictionary.dictionaryWithCapacity(1);
+  [symbols setObject:symbolMaster forKey:(symbolMaster.symbolID())];
+  pboardLayers.setSymbols(symbols);
+  pboardLayers.setLayers(MSLayerArray.arrayWithLayer(
+    symbolMaster.newSymbolInstance()
+  ));
+  return pboardLayers;
+}
+
+function isImmutableSketchObject(sketchObject) {
+  return !!(
+    sketchObject &&
+    sketchObject.class().mutableClass &&
+    sketchObject.class().mutableClass() &&
+    sketchObject.class().mutableClass() !== sketchObject.class()
+  );
+}
+
+function mutableSketchObject(immutableSketchObject) {
+  if (immutableSketchObject && immutableSketchObject.class) {
+    const immutableClass = immutableSketchObject.class();
+    if (immutableClass.mutableClass) {
+      const mutableClass = immutableClass.mutableClass();
+      return mutableClass.new().initWithImmutableModelObject(
+        immutableSketchObject
+      );
+    }
+  }
+}
+
+// Convert any immutable Sketch objects to mutable.
+function arrayWithMutableSketchObjects(array) {
+  return $.map(array, function(object) {
+    if (isImmutableSketchObject(object)) {
+      return mutableSketchObject(object);
+    } else {
+      return object;
+    }
+  });
+}
+
+// Convert any immutable Sketch objects to mutable.
+function dictionaryWithMutableSketchObjects(dictionary) {
+  return $.mapObject(dictionary.allKeys(), function(key) {
+    const object = dictionary.objectForKey(key);
+    if (object.class().dictionary) {
+      return [key, dictionaryWithMutableSketchObjects(object)];
+    } else if (isImmutableSketchObject(object)) {
+      return [key, mutableSketchObject(object)];
+    } else {
+      return [key, object];
+    }
+  });
+}
+
+function loadSketchLayers(urlString) {
+  const data = dataFromURL(urlString);
+
+  debug('Unarchiving data...');
+  const object = archive.sketchObjectFromArchiveData(data);
+
+  if (object) {
+    if (object.class().dictionary) {
+      debug('...data is a dictionary');
+
+      const pasteboardLayers = MSPasteboardLayers.new();
+
+      pasteboardLayers.setLayers(
+        MSLayerArray.arrayWithLayers(
+          arrayWithMutableSketchObjects(
+            archive.sketchObjectFromArchiveData(
+              object.objectForKey('layers')
+            )
+          )
+        )
+      );
+
+      pasteboardLayers.setSymbols(
+        dictionaryWithMutableSketchObjects(
+          archive.sketchObjectFromArchiveData(
+            object.objectForKey('symbols')
+          )
+        )
+      );
+
+      const sharedObjects = object.objectForKey('sharedObjects');
+
+      if (sharedObjects) {
+        pasteboardLayers.setSharedObjects(
+          dictionaryWithMutableSketchObjects(
+            sharedObjects
+          )
+        );
+      }
+
+      return pasteboardLayers;
+
+    } else {
+      debug('...data is NOT a dictionary, assume it is layers');
+      const layer = mutableSketchObject(object);
+
+      if (object.class() == 'MSSymbolMaster') {
+        // Symbol masters are a special case because what we want to “paste” is
+        // an instance of the master, not the master itself.
+        return pasteboardLayersFromSymbolMaster(layer);
+      } else {
+        return MSPasteboardLayers.pasteboardLayersWithLayers([layer]);
+      }
+    }
+  }else{
+    debug('Could not unarchive object data for url ' + urlString);
+  }
+}
+
+function symbolMasterFromPasteboardLayers(pasteboardLayers) {
+  // Assume there is one layer.
+  const layer = pasteboardLayers.layers().firstLayer();
+
+  if (layer) {
+
+    // If the layer is a master, then we are done!
+    if (layer.className() == 'MSSymbolMaster') {
+      return layer;
+
+    // If the layer is an instance, then look for a master in the attached symbols.
+    } else if (layer.className() == 'MSSymbolInstance') {
+      const symbols = pasteboardLayers.symbols();
+      if (symbols && symbols.count && symbols.count())
+      // Get the symbol master corresponding to the instance.
+      return symbols.objectForKey(layer.symbolID());
+    }
+
+  }
+}
+
+function importImage(urlString, fileExt) {
+  var importer;
+
+  switch (fileExt) {
+    case 'svg':
+      importer = MSSVGImporter.new();
+      break;
+
+    case 'eps':
+    case 'ai':
+      importer = MSPDFImporter.epsImporter();
+      break;
+
+    case 'png':
+      importer = new BitmapImporter();
+      break;
+  }
+
+  if (importer) {
+    var data = dataFromURL(urlString);
+    importer.prepareToImportFromData(data);
+    return importer.importAsLayer();
+
+  } else {
+    debug("No importer for image with \"" + fileExt + "\" extension");
+  }
+}
+
+function dataFromURL(urlString) {
+  var imgData;
+  const url = NSURL.URLWithString(urlString);
+  const webView = persist.get('brandaiMainWebView');
+
+  if (webView) {
+    var resource = webView.mainFrame().dataSource().subresourceForURL(url);
+    if (resource) {
+      debug("Loading image data from web view data source (" + urlString + ")");
+      imgData = resource.data();
+    } else {
+      var cached = webView.windowScriptObject().evaluateWebScript(
+        "window.brandai['imageCache-" + urlString + "']"
+      );
+      if (cached.class() != WebUndefined) {
+        debug("Loading image data from web view custom cache (" + urlString + ")");
+        imgData = NSData.dataWithContentsOfURL(NSURL.URLWithString(cached));
+      }
+    }
+  }
+
+  if (!imgData) {
+    debug("Loading image data from network (" + urlString + ")");
+    imgData = NSData.dataWithContentsOfURL(url);
+  }
+
+  return imgData;
+}
+
+function importPNG(nib, urlString) {
+  var url = NSURL.URLWithString(urlString);
+
+  // Try to get the image data from the web view, where it is probably already loaded.
+  var resource = nib.mainWebView.mainFrame().dataSource().subresourceForURL(url);
+  var image;
+  if (resource) {
+    debug('load ' + urlString + ' from web view');
+    image = NSImage.alloc().initWithData(resource.data());
+  } else {
+    debug('load ' + urlString + ' from network');
+    image = NSImage.alloc().initWithContentsOfURL(url);
+  }
+  var imageLayer = [MSBitmapLayer bitmapLayerFromImage:image withSizeScaledDownByFactor:1];
+  var group = MSLayerGroup.new()
+  group.addLayers([imageLayer]);
+  group.resizeToFitChildrenWithOption(0);
+  return group;
+}
+
+function thumbnailPNGDataForLayerStyle(layerStyle, width, height) {
+  const image = [MSLayerStylePreviewGenerator
+    previewForStyle:(layerStyle.style())
+    atSize:CGSizeMake(width, height)];
+  const cgRef = [image CGImageForProposedRect:nil context:nil hints:nil];
+  const newRep = [[NSBitmapImageRep alloc] initWithCGImage:cgRef];
+  newRep.setSize(image.size());
+  const pngData = [newRep representationUsingType:NSPNGFileType properties:nil];
+  return pngData;
+}
+
+//get symbol master for specific symbol
+function getSymbolMasterByID(document, symbolID, libraryContext) {
+  if (!libraryContext.documentSymbols) {
+	  libraryContext.documentSymbols = getSymbolsMastersByID(document);
+  }
+ return libraryContext.documentSymbols[symbolID];
+}
+
+//get all symbols master for specific document
+function getSymbolsMastersByID(document){
+  var documentSymbols = {};
+  const symbols = document.documentData().allSymbols();
+  $.forEach(symbols, function(symbol){
+    documentSymbols[symbol.symbolID()] = symbol;
+  })
+  return documentSymbols;
+}
+
+function sizeKeyForLayer(layer) {
+  return layer.bounds().size.width + 'X' + layer.bounds().size.height;
+}
+
+function symbolMastersBySizeInDocument(document) {
+  const symbols = document.documentData().allSymbols();
+  const bySize = {};
+  $.forEach(symbols, function(symbol) {
+    const size = sizeKeyForLayer(symbol);
+    bySize[size] = bySize[size] || [];
+    bySize[size].push(symbol);
+  });
+  return bySize;
+}
+
+function getRepresentativeInstancesOfEachSharedTextStyle(document) {
+  var firstLayerForEachSharedID = {};
+  for (var pageIndex = 0; pageIndex < document.pages().count(); pageIndex++) {
+    const page = document.pages().objectAtIndex(pageIndex);
+    const textLayers = page.children().filteredArrayUsingPredicate(
+      NSPredicate.predicateWithFormat('className == "MSTextLayer"')
+    );
+    for (var layerIndex = 0; layerIndex < textLayers.count(); layerIndex++) {
+      const layer = textLayers.objectAtIndex(layerIndex);
+      const sharedStyleID = layer.style().sharedObjectID();
+      if (sharedStyleID && !firstLayerForEachSharedID[sharedStyleID]) {
+        firstLayerForEachSharedID[sharedStyleID] = layer;
+      }
+    }
+  }
+  return firstLayerForEachSharedID;
+}
+
+function getDocumentTextStyles(document) {
+  return document.documentData().layerTextStyles().objects();
+};
+
+function getSharedTextStyleByID(document, id) {
+  const textStyles = getDocumentTextStyles(document);
+  return $.find(textStyles, function(style) {
+    return style.objectID().isEqualToString(id);
+  });
+}
+
+function getDocumentSharedLayerStyles(document) {
+  return document.documentData().layerStyles().objects();
+};
+
+function getSharedLayerStyleByID(document, id) {
+  const layerStyles = getDocumentSharedLayerStyles(document);
+  return $.find(layerStyles, function(style) {
+    return style.objectID().isEqualToString(id);
+  });
+}
+
+function descendantLayersWithClassNames(layer, classes) {
+  const predicateString = classes.map(function(c) {
+    return 'className == "' + c + '"';
+  }).join(' || ');
+  const predicate = NSPredicate.predicateWithFormat(predicateString);
+  return layer.children().filteredArrayUsingPredicate(predicate);
+}
+
+function createLibraryContext(imageData, pasteboardLayers, styleData) {
+  styleData = styleData || persist.get('brandaiStyleData');
+  return {
+    sharedObjects: (imageData.metadata || {}).sharedObjects || {},
+    pasteboardLayers: pasteboardLayers,
+    librarySymbols: allLibrarySymbolsIndexedBySymbolID(styleData),
+    librarySymbolsBySize: allLibrarySymbolsIndexedBySize(styleData)
+  };
+}
+
+function addOrUpdateSymbol(command, document, libraryContext, symbolMaster, imageData) {
+  imageData = imageData || {};
+
+  const symbolID = symbolMaster.symbolID();
+
+  const symbolMasterInDocument = getSymbolMasterByID(document, symbolID, libraryContext);
+
+  if (symbolMasterInDocument) {
+    debug('Updating symbol with symbolID: ' + symbolID);
+
+    // Replace layers.
+    replaceGroupContents(symbolMasterInDocument, symbolMaster);
+
+    // Copy properties from saved master.
+    symbolMasterInDocument.setBackgroundColor(
+      symbolMaster.backgroundColor()
+    );
+    symbolMasterInDocument.setIncludeBackgroundColorInInstance(
+      symbolMaster.includeBackgroundColorInInstance()
+    );
+    symbolMasterInDocument.setIncludeBackgroundColorInExport(
+      symbolMaster.includeBackgroundColorInExport()
+    );
+    symbolMasterInDocument.setHasBackgroundColor(
+      symbolMaster.hasBackgroundColor()
+    );
+    symbolMasterInDocument.setResizesContent(
+      symbolMaster.resizesContent()
+    );
+    symbolMasterInDocument.setIncludeInCloudUpload(
+      symbolMaster.includeInCloudUpload()
+    );
+    symbolMasterInDocument.setExportOptions(
+      symbolMaster.exportOptions()
+    );
+
+
+    symbolMasterInDocument.frame().setWidth(symbolMaster.frame().width());
+    symbolMasterInDocument.frame().setHeight(symbolMaster.frame().height());
+
+    // Override properties from design library.
+    if (imageData.displayName) {
+      symbolMasterInDocument.setName(imageData.displayName);
+    }
+
+  } else {
+    debug('Adding symbol with symbolID: ' + symbolID);
+
+    // Create symbols page if it doesn’t exist.
+    const symbolsPage = document.documentData()
+      .symbolsPageOrCreateIfNecessary();
+
+    // Add master to symbols page.
+    symbolsPage.addLayers([symbolMaster]);
+
+    // Move the out of the way so we can calculate a good position.
+    symbolMaster.frame().setX(-9999);
+    symbolMaster.frame().setY(-9999);
+
+    // Find a good location on the symbols page. Where would Sketch put it?
+    const position = [MSLayerPaster
+      findFirstAvailablePositionForSize:(symbolMaster.frame().size)
+      nextToArtboardsOnPage:symbolsPage
+      inAllowedRect:CGRectMake(0, 0, 1000, 1000)];
+
+    // Move the master into position.
+    symbolMaster.frame().setX(position.x);
+    symbolMaster.frame().setY(position.y);
+
+    // Override properties from design library.
+    if (imageData.displayName) {
+      symbolMaster.setName(imageData.displayName);
+    }
+
+	  libraryContext.documentSymbols[symbolID] = symbolMaster;
+  }
+
+  updateSharedObjectsForLayerTree(command, document, libraryContext, symbolMaster, false);
+}
+
+function addOrUpdateSymbolByID(command, document, libraryContext, symbolID) {
+  if (itemHasAlreadyBeenImportedThisSession(symbolID)) {
+    //debug('Skipping already imported symbol with symbolID: ' + symbolID);
+    return;
+  }
+
+  const symbolData = libraryContext.librarySymbols[symbolID];
+  if (symbolData) {
+    debug('Found symbol in library');
+    // The symbol exists in the library, so we should use that one.
+    const sketchLayerFormat = getSketchLayerFormat(symbolData.image);
+    if (sketchLayerFormat) {
+
+	    var sketchLayers = loadSketchLayers(sketchLayerFormat.url);
+	    if (!sketchLayers){
+		    debug(
+			    'Not adding or updating symbol "' +
+			    symbolData.image.displayName +
+			    '": could not its sketch layers data.'
+		    );
+	      return;
+      }
+      const symbolMaster = symbolMasterFromPasteboardLayers(
+	      sketchLayers
+      );
+      if (symbolMaster) {
+        addOrUpdateSymbol(
+          command,
+          document,
+          libraryContext,
+          symbolMaster,
+          symbolData.image
+        );
+      } else {
+        debug(
+          'Not adding or updating symbol "' +
+          symbolData.image.displayName +
+          '": pasteboard layers do not represent a symbol (in add or update).'
+        );
+      }
+    }
+
+  } else {
+    debug('Looking for symbol in attached layers');
+    // The symbol is not present in the design library,
+    // so use the one in the MSPasteboardLayers “attachments.”
+    const attachedSymbols = libraryContext.pasteboardLayers.symbols();
+    if (attachedSymbols) {
+      const symbolMaster = libraryContext.pasteboardLayers.symbols().objectForKey(symbolID);
+
+      if (symbolMaster) {
+        debug('Found symbol in attached layers');
+        addOrUpdateSymbol(
+          command,
+          document,
+          libraryContext,
+          symbolMaster
+        );
+      } else {
+        debug('Not adding symbol; no master found for symbolID ' + symbolID);
+      }
+
+    } else {
+      debug('Not adding symbol; no attached symbols when looking for symbolID ' + symbolID);
+    }
+  }
+}
+
+function addOrUpdateSharedTextStyle(document, command, typeStyle) {
+  const previouslyImportedSharedTextStyle =
+    getPreviouslyImportedSharedTextStyles(document)[typeStyle._id];
+
+  if (itemHasAlreadyBeenImportedThisSession(typeStyle._id)) {
+    debug('Skipping already imported type style with _id: ' + typeStyle._id);
+    return previouslyImportedSharedTextStyle;
+  }
+
+  const desiredTextStyle = sketchTextStyleFromBrandAITypeStyle(typeStyle);
+  const desiredContextSettings = sketchContextSettingsFromBrandAIObject(typeStyle);
+
+  if (previouslyImportedSharedTextStyle) {
+
+    return updateSharedTextStyle(
+      document,
+      previouslyImportedSharedTextStyle,
+      desiredTextStyle,
+      desiredContextSettings,
+      typeStyle.name
+    );
+
+  } else {
+
+    // There is no style in Sketch that corresponds to the
+    // one from the API. So we want to add that style.
+    return addSharedTextStyle(
+      command,
+      document,
+      desiredTextStyle,
+      desiredContextSettings,
+      typeStyle.name,
+      typeStyle._id
+    );
+  }
+}
+
+function updateSharedTextStyle(document, sharedStyle, newTextStyle, newContextSettings, name) {
+  debug('Updating shared text style: ' + name);
+  name = name || 'Untitled Style';
+
+  // Update the name.
+  sharedStyle.setName(name);
+
+  // Update the style:
+  // Create a dummy layer and add to the document. This
+  // will be the source that the shared style is updated to
+  // match.
+  const dummyLayer = MSTextLayer.new();
+  const style = dummyLayer.style();
+  style.setTextStyle(newTextStyle);
+  style.setContextSettings(newContextSettings);
+  style.setSharedObjectID(sharedStyle.objectID());
+  document
+    .documentData()
+    .layerTextStyles()
+    .syncSharedObjectWithInstance(style);
+
+  return sharedStyle;
+}
+
+function addSharedTextStyle(command, document, newTextStyle, newContextSettings, name, brandAIID) {
+  debug('Adding new shared text style: ' + name);
+  name = name || 'Untitled Style';
+
+  const newStyle = MSStyle.alloc().init();
+  newStyle.setTextStyle(newTextStyle);
+  newStyle.setContextSettings(newContextSettings); //will set the opacity
+  const addedSharedStyle = document
+    .documentData()
+    .layerTextStyles()
+    .addSharedStyleWithName_firstInstance(name, newStyle);
+
+  // Remember which Brand.ai type style this Sketch shared style came from
+  // so it can be updated later.
+  const newSharedTextStylesMap = {};
+  newSharedTextStylesMap[addedSharedStyle.objectID()] = brandAIID;
+
+  storeImportedSharedTextStylesMap(
+    command,
+    document.documentData(),
+    newSharedTextStylesMap
+  );
+
+  return addedSharedStyle;
+}
+
+function addOrUpdateSharedLayerStyle(document, command, sharedStyle) {
+  const previouslyImportedSharedLayerStyle =
+    getPreviouslyImportedSharedLayerStyles(document)[sharedStyle._id];
+
+  if (itemHasAlreadyBeenImportedThisSession(sharedStyle._id)) {
+    debug('Skipping already imported shared style with _id: ' + sharedStyle._id);
+    return previouslyImportedSharedLayerStyle;
+  }
+
+  const desiredStyle = sketchStyleFromBrandAISharedStyle(sharedStyle);
+
+  if (previouslyImportedSharedLayerStyle) {
+    debug('Updating shared layer style: ' + sharedStyle.name);
+    previouslyImportedSharedLayerStyle.setName(sharedStyle.name);
+
+    // Save users’s current selection.
+    const userSelection = document.selectedLayers();
+
+    // Create a layer on the current page to sync from.
+    // TODO: use syncSharedObjectWithInstance instead?
+    const group = MSShapeGroup.new();
+    [(desiredStyle.style()) copyPropertiesToObject:(group.style()) options:null];
+    group.style().setSharedObjectID(previouslyImportedSharedLayerStyle.objectID());
+    document.currentPage().addLayers([group]);
+
+    // Sync styles from the layer to the shared style, as
+    // if the user had clicked the sync button in Sketch.
+    [group select:true byExpandingSelection:false];
+    const syncAction = MSSyncSharedStyleAction.alloc()
+      .initWithDocument(document);
+    syncAction.doPerformAction(null);
+
+    // Remove added layer and restore user’s selection.
+    document.currentPage().removeLayer(group);
+    document.setSelectedLayers(userSelection);
+
+    return previouslyImportedSharedLayerStyle;
+
+  } else {
+    debug('Adding shared layer style: ' + sharedStyle.name);
+    const sketchLayerStyles = document.documentData().layerStyles();
+    const addedSharedStyle = [sketchLayerStyles
+      addSharedStyleWithName:(sharedStyle.name || 'Untitled Style')
+      firstInstance:(desiredStyle.style())];
+
+    const newSharedStylesMap = {};
+    // String based access of sharedStyle object is required
+    // on the next line because the cocoascript preprocessor
+    // turns `sharedStyle._id` into `sharedStyle._var`
+    // because it is TERRIBLE!
+    newSharedStylesMap[addedSharedStyle.objectID()] = sharedStyle['_id'];
+    storeImportedSharedLayerStylesMap(
+      command,
+      document.documentData(),
+      newSharedStylesMap
+    );
+
+    return addedSharedStyle;
+  }
+}
+
+function updateSharedObjectsForLayerTree(command, document, libraryContext, layerTreeRoot, isFirstLevel) {
+  debug('Update shared objects for layer: ' + layerTreeRoot + ' with name: ' + layerTreeRoot.name());
+  const librarySharedObjects = libraryContext.sharedObjects;
+
+  const filteredDescendantLayers = descendantLayersWithClassNames(
+    layerTreeRoot, [MSTextLayer, MSShapeGroup, MSSymbolInstance]
+  );
+
+  $.forEach(filteredDescendantLayers, function(descendant) {
+    const sharedObjectID = descendant.style().sharedObjectID()
+
+    if (descendant.className() == 'MSTextLayer') {
+      // Fixes a bug where the archive/unarchive process does not preserve the
+      // correct value for line spacing behavior. We assume that 2 is the
+      // correct value.
+      if (descendant.lineSpacingBehaviour() == 0) {
+        descendant.setLineSpacingBehaviour(2);
+      }
+
+      const brandAITypeStyleID = librarySharedObjects[sharedObjectID];
+
+      if (brandAITypeStyleID) {
+        // Should be using a Brand.ai type style.
+
+        const typeStyle = librarySharedObjects[sharedObjectID + 'Object'];
+        if (typeStyle) {
+
+          // Import the shared text style to the document.
+          const correctTextStyle =
+            addOrUpdateSharedTextStyle(document, command, typeStyle);
+
+          // Update the layer to reflect the current shared state.
+          descendant.style().setTextStyle(correctTextStyle.style().textStyle());
+
+          // Link to the correct shared text style.
+          descendant.style().setSharedObjectID(correctTextStyle.objectID());
+        }
+      }
+
+    } else if (descendant.className() == 'MSShapeGroup') {
+      const brandAISharedStyleID = librarySharedObjects[sharedObjectID];
+
+      if (brandAISharedStyleID) {
+        // Should be using a Brand.ai shared style.
+
+        const sharedStyle = librarySharedObjects[sharedObjectID + 'Object'];
+        if (sharedStyle) {
+
+          const correctLayerStyle =
+            addOrUpdateSharedLayerStyle(document, command, sharedStyle);
+
+          // Update the layer to reflect the current shared state.
+          descendant.setStyle(correctLayerStyle.style().copy());
+
+          // Link the layer to the shared style.
+          descendant.style().setSharedObjectID(correctLayerStyle.objectID());
+        }
+      }
+
+    } else if (descendant.className() == 'MSSymbolInstance') {
+      const symbolID = descendant.symbolID();
+      debug('Descendant symbol instance ' + symbolID);
+
+      addOrUpdateSymbolByID(
+        command,
+        document,
+        libraryContext,
+        symbolID
+      );
+
+      // Apart from importing the correct symbol master to back the instance,
+      // we also should import any masters that are referred to by the instance
+      // overrides. A user can override a nested symbol with another and if
+      // they have, we want that symbol to also be added to the document.
+      addOrUpdateOverrideSymbolsForInstance(
+        command,
+        document,
+        libraryContext,
+        descendant
+      );
+
+      // Import symbols that are the same size as the *master*. Sketch offers
+      // these as possible overrides so we want to make sure they are present in
+      // the document so Sketch can do this.
+      const symbolMaster = libraryContext.librarySymbols[symbolID];
+	    if (!isFirstLevel && symbolMaster && symbolMaster.image && symbolMaster.image.dimensions) {
+        const symbolsOfSameSize =
+          libraryContext.librarySymbolsBySize[symbolMaster.image.dimensions];
+        if (symbolsOfSameSize) {
+          symbolsOfSameSize.forEach(function(symbolOfSameSize) {
+            addOrUpdateSymbolByID(
+              command,
+              document,
+              libraryContext,
+              symbolOfSameSize.metadata.sketchSymbolId
+            );
+          });
+        }
+      }
+
+
+    }
+
+  });
+}
+
+function addOrUpdateOverrideSymbolsForInstance(command, document, libraryContext, symbolInstance) {
+  if (symbolInstance) {
+
+    // Import any symbols that are explicitly used as overrides. Note that
+    // there are cases when this might not qualify under the
+    // symbols-of-same-size check. E.g. the overriden symbol no longer matches
+    // the size of the original.
+    if (symbolInstance.overrides && symbolInstance.overrides()) {
+      const overrides = symbolInstance.overrides().objectForKey(0);
+      if (overrides && overrides.allKeys) {
+        $.forEach(overrides.allKeys(), function(key) {
+          const override = overrides[key];
+          if (override && override.objectForKey && override.objectForKey('symbolID')) {
+            addOrUpdateSymbolByID(
+              command,
+              document,
+              libraryContext,
+              override.objectForKey('symbolID')
+            );
+          }
+        });
+      }
+    }
+  }
+}
+
+function getSketchLayerFormat(image) {
+  var result = null;
+
+  if (image && image.additionalFormats && image.additionalFormats.find) {
+    result = image.additionalFormats.find(function(format) {
+      return format && format.extension == 'skla';
+    });
+  }
+
+  // fallback for some old data that doesn't contain additionalFormats:
+  return result || { url: image.url.replace(/\.svg$/, '.skla'), extension: 'skla' };
+}
+
+function getPageByName(document, pageName) {
+  return $.find(document.pages(), function(page) {
+    return page.name() == pageName;
+  });
+}
+
+function replaceGroupContents(existingGroup, newGroup) {
+  // Remove existing layers in group.
+  while (existingGroup.layers().count() > 0) {
+    existingGroup.removeLayer(existingGroup.lastLayer());
+  }
+  existingGroup.addLayers(newGroup.layers());
+}
+
+function createCocoaObject(methods, superclass) {
+  var uniqueClassName = "Brand.ai_dynamic_class_" + NSUUID.UUID().UUIDString();
+  var classDesc = MOClassDescription.allocateDescriptionForClassWithName_superclass_(uniqueClassName, superclass || NSObject);
+  classDesc.registerClass();
+  for (var selectorString in methods) {
+    var selector = NSSelectorFromString(selectorString);
+    [classDesc addInstanceMethodWithSelector:selector function:(methods[selectorString])];
+  }
+  return NSClassFromString(uniqueClassName).new();
+}
+
+function mutableDictionaryForDocumentKey(documentData, key) {
+  const obj = ((documentData.userInfo() || {})[IDENTIFIER] || {})[key];
+  return NSMutableDictionary.dictionaryWithDictionary(obj || {});
+}
+
+
+// Add a view in front of the web view that will accept the first mouse event
+// when the window is not active and forward that event to the webview. This
+// simulates implementing -acceptsFirstMouse: on the WebView, but subclassing
+// that to do so does not work.
+function addFirstMouseAcceptor(nib) {
+  const contentView = nib.mainWindow.contentView();
+  const webView = nib.mainWebView;
+
+  // Look for a view already added by this function. If it’s already there we
+  // are done.
+  const existingAcceptor = $.find(contentView.subviews(), function(view) {
+    return view.identifier() == 'firstMouseAcceptor';
+  });
+  if (existingAcceptor) {
+    return;
+  }
+
+  // NSButton already returns YES for -acceptsFirstMouse: so all we need to do
+  // is handle the mouseDown event.
+  const button = createCocoaObject({
+    'mouseDown:': function(evt) {
+      // Remove this view. Subsequent events such the mouseUp event that will
+      // probably immediately follow mouseDown or any other mouse events will
+      // be handled as if this view is not here because it will not be here!
+      this.removeFromSuperview();
+
+      // Now send the same mouseDown event again as if the user had just
+      // clicked. With the button gone, this will be handled by the WebView.
+      NSApplication.sharedApplication().sendEvent(evt);
+    },
+  }, NSButton);
+
+  button.setIdentifier('firstMouseAcceptor');
+  button.setTransparent(true);
+  button.setTranslatesAutoresizingMaskIntoConstraints(false);
+
+  contentView.addSubview(button);
+
+  const views = {
+    button: button,
+    webView: webView
+  };
+
+  // Match width of WebView.
+  contentView.addConstraints([NSLayoutConstraint
+    constraintsWithVisualFormat:'H:[button(==webView)]'
+    options:NSLayoutFormatDirectionLeadingToTrailing
+    metrics:null
+    views:views]);
+
+  // Match height of WebView.
+  contentView.addConstraints([NSLayoutConstraint
+    constraintsWithVisualFormat:'V:[button(==webView)]'
+    options:NSLayoutFormatDirectionLeadingToTrailing
+    metrics:null
+    views:views]);
+
+  // Match top of WebView.
+  contentView.addConstraints([[NSLayoutConstraint
+    constraintWithItem:button attribute:NSLayoutAttributeTop
+    relatedBy:NSLayoutRelationEqual toItem:webView
+    attribute:NSLayoutAttributeTop multiplier:1 constant:0]]);
+}
+
+function flippedPointInView(view, x, y) {
+  return NSMakePoint(x + view.frame().origin.x, view.frame().size.height + view.frame().origin.y - y);
+}
+
+// Returns a new rect where the height has been changed,
+// maintaining the y position of the overall rect relative
+// to the top of the screen.
+function rectWithNewHeightExpandingDown(rect, newHeight) {
+  const heightIncrease = newHeight - rect.size.height;
+
+  return CGRectMake(
+    rect.origin.x,                  // Keep current x
+    rect.origin.y - heightIncrease, // Calculate new y so rect expands down instead of up
+    rect.size.width,                // Keep existing width
+    newHeight                       // Use new height
+  );
+}
+
+function popUpContextMenuInWebView(menu, webView, point) {
+  const syntheticClick = [NSEvent mouseEventWithType:NSRightMouseDown
+    location:flippedPointInView(webView, point.x, point.y)
+    modifierFlags:0
+    timestamp:(NSProcessInfo.processInfo().systemUptime())
+    windowNumber:(webView.window().windowNumber())
+    context:null
+    eventNumber:9999
+    clickCount:1
+    pressure:0.0];
+
+  [NSMenu popUpContextMenu:menu withEvent:syntheticClick forView:webView];
+}
+
+function possibleSketchLayerNamesFromURL(url, extension) {
+  const possibleNames = [];
+  const pathParts = url.split('/');
+  const fileName = pathParts[pathParts.length - 1];
+  possibleNames.push(fileName);
+
+  const fileNameParts = fileName.split('.');
+  if (fileNameParts.length > 1) {
+    const fileNameWithoutExtension = fileNameParts.slice(0, -1).join('.');
+
+    // Try the extension given by the data, which might
+    // differ from the one in the URL.
+    possibleNames.push(fileNameWithoutExtension + '.' + extension);
+
+    // Try with no extension at all.
+    possibleNames.push(fileNameWithoutExtension);
+  }
+
+  const possibleNamesCountSoFar = possibleNames.length;
+  for (var i = 0; i < possibleNamesCountSoFar; i++) {
+    const possibleName = possibleNames[i];
+    var decodedName = decodeURIComponent(possibleName);
+    decodedName = decodedName.replace(new RegExp(':', 'g'), '-');
+    possibleNames.push(decodedName);
+  }
+
+  possibleNames.push('Bitmap');
+
+  return possibleNames;
+}
+
+function normalizeSelectedSymbols(selectedLayers) {
+  const normalizedSelection = NSMutableArray
+    .arrayWithCapacity(selectedLayers.count());
+
+  // Deduplicate layers based on their symbolID or objectID. This means you can
+  // only choose one reference to a symbol. It could be a master or an
+  // instance, but either way you get it once, and that’s it.
+  const includedLayerIDs = {};
+  const addToSelectionIfNotAlreadyAdded = function(layer) {
+    // Use symbolID falling back to objectID to identify layers.
+    const layerID = layer.symbolID && layer.symbolID() || layer.objectID();
+    const alreadyIncluded = includedLayerIDs[layerID];
+    if (!alreadyIncluded) {
+      normalizedSelection.addObject(layer);
+      includedLayerIDs[layerID] = true;
+    }
+  }
+
+  $.forEach(selectedLayers, function(layer) {
+    const parent = getParentLayer(layer);
+    if (parent && parent.class() == 'MSSymbolMaster') {
+      // If the direct parent of a selected layer is a symbol master, ignore
+      // the layer and pretend the master is selected.
+      addToSelectionIfNotAlreadyAdded(parent);
+
+    } else {
+      // All other layers are added (minus deduplication).
+      addToSelectionIfNotAlreadyAdded(layer);
+    }
+  });
+
+  return normalizedSelection;
+}
+
+
+function symbolMasterDependenciesForLayers(document, layers) {
+  const allSymbolMastersBySize = symbolMastersBySizeInDocument(document);
+  const symbolMasterDependenciesBySymbolId = {};
+  const symbolMasterDependenciesByLayerId = {};
+  var duplicationsFound = false;
+  layers.forEach(function(layer) {
+    traverseLayerTree(layer, function(layer, isInsideSymbol) {
+      // Any symbol found in the layer tree is a dependency.
+      if (layer.className() == 'MSSymbolMaster') {
+        symbolMasterDependenciesBySymbolId[layer.symbolID()] = layer;
+        symbolMasterDependenciesByLayerId[layer.objectID()] = true;
+        // Also treat as a dependency any symbol that is
+        // the same size as a symbol found inside a symbol
+        // (not just inside a layer that the user wants to
+        // upload). Layers of the same size nested in a
+        // symbol are shown by Sketch as potential overrides
+        // so they should be included as dependencies.
+        if (isInsideSymbol) {
+          layer.isNestedInMasterSymbol = true;
+          const sizeOfSymbol = sizeKeyForLayer(layer);
+          const symbolsOfSameSize = allSymbolMastersBySize[sizeOfSymbol];
+          if (symbolsOfSameSize) {
+            symbolsOfSameSize.forEach(function(symbol) {
+              //we want to decrease the duplication layer issue we encountered so we will not add a layer with same id
+              // as a potential override to avoid unecessary corruptions
+              if (!symbolMasterDependenciesByLayerId[symbol.objectID()]) {
+                symbolMasterDependenciesBySymbolId[symbol.symbolID()] = symbol;
+              } else {
+                //if layers for some reason have the same layerId and different symbol ids
+                if (!layer.symbolID().isEqualToString(symbol.symbolID())) {
+                  duplicationsFound = true;
+                }
+              }
+            });
+          }
+        }
+      }
+    });
+  });
+
+
+  if (duplicationsFound) {
+    //if duplication were found report an error
+    var allSymbolsMasters = $.map(document.documentData().allSymbols(), function(symbol) {
+      return { symbolId: coerceString(symbol.symbolID()), layerId: coerceString(symbol.objectID()), name: coerceString(symbol.name()) };
+    });
+    postWebUIEvent('onLogMessage', {
+      level: 'error',
+      data: { message: 'Same size duplicate elements were found and ignored in uploadLayers',  currentMasterSymbols: allSymbolsMasters }
+    });
+  }
+
+  // Return just an array of the values.
+  return Object.keys(symbolMasterDependenciesBySymbolId).map(function(symbolID) {
+    return symbolMasterDependenciesBySymbolId[symbolID];
+  });
+}
+
+
+function styleDependenciesForLayers(document, styleData, layersMap) {
+
+  //get all current document shared style map as getting each time by id is very heave on performance
+  const documentSharedStylesById = $.mapObject(getDocumentSharedLayerStyles(document), function(sharedStyle){
+    return [sharedStyle.style().sharedObjectID(), sharedStyle];
+  });
+
+  //get all current document text style map as getting each time by id is very heave on performance
+  const documentTextStylesById = $.mapObject(getDocumentTextStyles(document), function(textStyle){
+    return [textStyle.style().sharedObjectID(), textStyle];
+  });
+
+  const sharedLayerStyleDependencies = NSMutableSet.new();
+  const sharedTextStyleDepencendies = NSMutableSet.new();
+
+  //find styles of each uploaded layer (including same size)
+  Object.keys(layersMap).forEach(function(key) {
+    var origLayer = layersMap[key];
+    traverseLayerTree(origLayer, function(layer) {
+      if (layer.className() == 'MSShapeGroup') {
+        const sharedLayerStyleID = layer.style().sharedObjectID();
+        const layerStyle = documentSharedStylesById[sharedLayerStyleID];
+        if (layerStyle) {
+          sharedLayerStyleDependencies.addObject(layerStyle);
+        }
+
+      } else if (layer.className() == 'MSTextLayer') {
+        const sharedTextStyleID = layer.style().sharedObjectID();
+        const textStyle = documentTextStylesById[sharedTextStyleID];
+        if (textStyle) {
+          sharedTextStyleDepencendies.addObject(textStyle);
+        }
+      }
+    });
+  });
+
+  //get parent libraries styles to prevent uploading them to children
+  const parentLibraryBrandAISharedStyleIDs = NSMutableSet.new();
+  styleData.globalAssets.sharedStyles.forEach(function(style) {
+    if (style.styleguideId != styleData.styleguide._id) {
+      debug(style._id);
+      parentLibraryBrandAISharedStyleIDs.addObject(style._id);
+    }
+  });
+  const parentLibraryBrandAITypeStyleIDs = NSMutableSet.new();
+  styleData.globalAssets.typeStyles.forEach(function(style) {
+    if (style.styleguideId != styleData.styleguide._id) {
+      parentLibraryBrandAITypeStyleIDs.addObject(style._id);
+    }
+  });
+
+  const brandAISharedStyleIDsByLayerStyleID =
+    getPreviouslyImportedSharedLayerStylesMap(document.documentData());
+  const brandAITypeStyleIDsByTextStyleID =
+    getPreviouslyImportedSharedTextStylesMap(document.documentData());
+
+  //create data needed to upload each shared style
+  const sharedLayerStylesToUpload = [];
+  $.forEach(sharedLayerStyleDependencies.allObjects(), function(layerStyle) {
+    const uploadData = {
+      objectID: coerceString(layerStyle.objectID()),
+      name: coerceString(layerStyle.name())
+    };
+    const brandAIID = brandAISharedStyleIDsByLayerStyleID[layerStyle.objectID()];
+    if (!brandAIID || !parentLibraryBrandAISharedStyleIDs.containsObject(brandAIID)) {
+      if (brandAIID) {
+        uploadData._id = coerceString(brandAIID);
+      }
+      sharedLayerStylesToUpload.push(uploadData);
+    }
+  });
+
+  //create data needed to upload each shared style including font families
+  const fontVariantsToUpload = {};
+  const sharedTypeStylesToUpload = [];
+  $.forEach(sharedTextStyleDepencendies.allObjects(), function(textStyle) {
+    const typeStyle = brandAITypeStyleFromSketchSharedStyle(textStyle);
+    const brandAIID = brandAITypeStyleIDsByTextStyleID[textStyle.objectID()];
+    if (!brandAIID || !parentLibraryBrandAITypeStyleIDs.containsObject(brandAIID)) {
+      if (brandAIID) {
+        typeStyle._id = coerceString(brandAIID);
+      }
+      if (!fontVariantsToUpload[typeStyle.fontFamily]) {
+        fontVariantsToUpload[typeStyle.fontFamily] =
+          fontVariantsInFontFamily(typeStyle.fontFamily);
+      }
+      sharedTypeStylesToUpload.push(typeStyle);
+    }
+  });
+
+  return {
+    sharedTypeStylesToUpload: sharedTypeStylesToUpload,
+    sharedLayerStylesToUpload: sharedLayerStylesToUpload,
+    fontVariantsToUpload: fontVariantsToUpload
+  };
+}
+
+function countLayerArtboards(selectedLayers) {
+  const includedArtboardIDs = {};
+  const addToSelectionIfNotAlreadyAdded = function(artboard) {
+    // Use symbolID falling back to objectID to identify layers.
+    const artboardId = artboard.objectID();
+    const alreadyIncluded = includedArtboardIDs[artboardId];
+    if (!alreadyIncluded) {
+      includedArtboardIDs[artboardId] = true;
+    }
+  };
+
+  const recursivelyLookForArtboard = function(layer) {
+    if (layer.class() == 'MSArtboardGroup') {
+      addToSelectionIfNotAlreadyAdded(layer);
+      return;
+    }
+
+    const parent = getParentLayer(layer);
+    if (parent) {
+      recursivelyLookForArtboard(parent);
+    }
+  };
+
+  $.forEach(selectedLayers, function(layer) {
+    recursivelyLookForArtboard(layer);
+  });
+
+  return Object.keys(includedArtboardIDs).length;
+}
+
+function findLayerArtboards(selectedLayers) {
+  const normalizedSelection = NSMutableArray
+    .arrayWithCapacity(selectedLayers.count());
+
+  const includedArtboardIDs = {};
+  const addToSelectionIfNotAlreadyAdded = function(artboard) {
+    // Use symbolID falling back to objectID to identify layers.
+    const artboardId = artboard.objectID();
+    const alreadyIncluded = includedArtboardIDs[artboardId];
+    if (!alreadyIncluded) {
+      normalizedSelection.addObject(artboard);
+      includedArtboardIDs[artboardId] = true;
+    }
+  };
+
+  const recursivelyLookForArtboard = function(layer) {
+    if (layer.class() == 'MSArtboardGroup') {
+      addToSelectionIfNotAlreadyAdded(layer);
+      return;
+    }
+
+    const parent = getParentLayer(layer);
+    if (parent) {
+      recursivelyLookForArtboard(parent);
+    }
+  };
+
+  $.forEach(selectedLayers, function(layer) {
+    recursivelyLookForArtboard(layer);
+  });
+
+  return normalizedSelection;
+}
+
+// We’ll keep track of symbols, type styles, etc. that have
+// been imported so each one is only imported once per
+// click or “session.“ The reason this might happen is that each symbol
+// can contain other symbols, and so a symbol might be
+// refered to more than once.
+function resetImportSession() {
+  persist.set('IDsImportedThisSession', NSMutableSet.new());
+}
+
+// Note: this also adds the ID you are asking about to the
+// set of already imported IDs!
+function itemHasAlreadyBeenImportedThisSession(ident) {
+  const alreadyImportedIDs = persist.get('IDsImportedThisSession');
+  if (alreadyImportedIDs.containsObject(ident)) {
+    return true;
+  } else {
+    alreadyImportedIDs.addObject(ident);
+    return false;
+  }
+}
+
+// The returned type of MSDocument.selectedLayers()
+// changed between Sketch 41 and 42. This smooths over the
+// difference by always returning an NSArray.
+function selectedLayersInDocument(document) {
+  const selectedLayers = document.selectedLayers();
+
+  if (selectedLayers.class() == 'MSLayerArray') {
+    return selectedLayers.containedLayers();
+  } else {
+    return selectedLayers;
+  }
+}
+
+function allLibrarySymbolsIndexedBySymbolID(styleData) {
+
+  const imagesByID = {};
+  applyToAllImages(styleData, function(image, imageType, sectionId) {
+    if (image.metadata && image.metadata.sketchSymbolId) {
+      imagesByID[image.metadata.sketchSymbolId] = {
+        sectionType: imageType,
+        sectionID: sectionId,
+        image: image
+      };
+    }
+  });
+
+  //todo: decide what to do here with sketch symbols
+  // Add in canonical sketch symbols last because they should “win” the slot
+  // for the ID in question.
+  (styleData.globalAssets.sketchSymbols || []).forEach(function(symbol) {
+    imagesByID[symbol.metadata.sketchSymbolId] = {
+      image: symbol
+    };
+  });
+
+  return imagesByID;
+}
+
+function allLibrarySymbolsIndexedBySize(styleData) {
+  // todo: we are receiving styleguide here for now, need to discuss what we want to do
+
+  // Note: this does not consider symbols stored as attachments in image
+  // sections, e.g. any image with a metadata.sketchSymbolId. It doesn’t seem
+  // worth it considering people who use this feature are most likely going to
+  // get all those same-sized items in their library via a process that will
+  // put them in the canonical sketchSymbols part of the library anyway, which
+  // is where we ARE looking.
+
+  const imagesBySize = {};
+
+  (styleData.globalAssets.sketchSymbols || []).forEach(function(symbol) {
+    if (symbol.dimensions) {
+      const size = symbol.dimensions;
+      imagesBySize[size] = imagesBySize[size] || [];
+      imagesBySize[size].push(symbol);
+    }
+  });
+
+  return imagesBySize;
+}
+
+function getItemsInImageSection(styleData, imageType, sectionID) {
+  const category = constants.IMAGE_CATS[imageType];
+  const sections = styleData[category.categoryKey];
+  if (sections && sections.find) {
+    const section = sections.find(function(section) {
+      return section._id == sectionID;
+    });
+    if (section) {
+      return section[category.itemsKey];
+    }
+  }
+}
+
+function getPrimaryFontFamily(fontStack) {
+  fontStack = fontStack.replace(new RegExp('(^\\s+|\\s+$)', 'g'));
+
+  var match = (new RegExp('^"((\\\\"|[^"])+)"')).exec(fontStack);
+  if (match) {
+    return match[1].replace(new RegExp('\\\\"', 'g'), '"');
+  }
+
+  match = (new RegExp("^'((\\\\'|[^'])+)'")).exec(fontStack);
+  if (match) {
+    return match[1].replace(new RegExp("\\\\'", 'g'), "'");
+  }
+
+  match = (new RegExp('^(\\\\,|[^,])+')).exec(fontStack);
+  if (match) {
+    return match[0];
+  }
+}
+
+function getAvailableMembersOfFontFamily(fontStack) {
+  const fontManager = NSFontManager.sharedFontManager();
+
+  // TODO: Go through the list of families in the stack?
+  var family = getPrimaryFontFamily(fontStack);
+
+  // Note: availableMembersOfFontFamily will return null if there are no matches.
+  var members = fontManager.availableMembersOfFontFamily(family);
+
+  if (!members) {
+    const installedFamilies = fontManager.availableFontFamilies();
+    const installedFamiliesKeyedBySimplifiedName = {};
+    $.forEach(installedFamilies, function(family) {
+      const simplifiedName = simplifyFontFamilyName(coerceString(family));
+      installedFamiliesKeyedBySimplifiedName[simplifiedName] = family;
+    });
+
+    const simplifiedTargetName = simplifyFontFamilyName(family);
+    const simplifiedMatch = installedFamiliesKeyedBySimplifiedName[simplifiedTargetName];
+    if (simplifiedMatch) {
+      members = fontManager.availableMembersOfFontFamily(simplifiedMatch);
+      family = simplifiedMatch;
+    }
+
+    if (!members) {
+      // Match families with a trailing single letter, e.g. 'Gotham A' which
+      // are created by Typography.com.
+      const modFamilyName = family.replace(new RegExp(' [A-Za-z]$'), '');
+      const modSimplifiedTargetName = simplifyFontFamilyName(modFamilyName);
+      const modSimplifiedMatch = installedFamiliesKeyedBySimplifiedName[modSimplifiedTargetName];
+      if (modSimplifiedMatch) {
+        members = fontManager.availableMembersOfFontFamily(modSimplifiedMatch);
+        family = modSimplifiedMatch;
+      }
+    }
+  }
+
+  return {
+    members: members,
+    familyName: family
+  };
+}
+
+// 'Frutiger Neue LT Pro' => 'frutigerneueltpro'
+// 'FrutigerNeueLTPro'    => 'frutigerneueltpro'
+// 'museo-sans'           => 'museosans'
+// 'Museo Sans'           => 'museosans'
+function simplifyFontFamilyName(fontFamily) {
+  return fontFamily.replace(new RegExp('[- ]', 'g'), '').toLowerCase();
+}
+
+function getFileExtension(url) {
+  var urlParts = url.split('.');
+  return urlParts[urlParts.length - 1].toLowerCase();
+}
+
+function imageMediaTypeFromURL(url) {
+  switch (getFileExtension(url)) {
+    case 'png': return 'image/png';
+    case 'svg': return 'image/svg+xml';
+  }
+}
+
+function getTempFilePath(name, ext) {
+  var unique = NSProcessInfo.processInfo().globallyUniqueString();
+  var fileName = name + '__' + unique;
+  if (ext) {
+    fileName += '.' + ext;
+  }
+  return NSTemporaryDirectory().stringByAppendingPathComponent(fileName);
+}
+
+function dataURLFromData(data, type) {
+  return NSString.stringWithFormat(
+    'data:%@;base64,%@',
+    type,
+    data.base64EncodedStringWithOptions(0)
+  );
+}

@@ -1,0 +1,313 @@
+//
+
+function popUpContextMenuInWebView(menu, webView, point) {
+  const syntheticClick = [NSEvent mouseEventWithType:NSRightMouseDown
+  location:flippedPointInView(webView, point.x, point.y)
+  modifierFlags:0
+  timestamp:(NSProcessInfo.processInfo().systemUptime())
+  windowNumber:(webView.window().windowNumber())
+  context:null
+  eventNumber:9999
+  clickCount:1
+  pressure:0.0];
+
+  [NSMenu popUpContextMenu:menu withEvent:syntheticClick forView:webView];
+}
+
+
+function addMenuItem(nib, menu, title, action, image, indent) {
+  const item = NSMenuItem.new();
+  if (title) {
+    item.setTitle(title);
+  }
+  if (action) {
+    nib.attachTargetAndAction(item, action);
+  }
+  if (image) {
+    item.setImage(image);
+  }
+  if (indent) {
+    item.setIndentationLevel(indent);
+  }
+  menu.addItem(item);
+  return item;
+}
+
+function colorPaletteMenu(nib, selectedColorID, actionMaker) {
+  const styleData = persist.get('brandaiStyleData');
+  const swatchSize = NSMakeSize(24, 12);
+  const menu = NSMenu.new();
+
+  var firstPalette = true;
+
+  [DEFAULT_COLORS].concat(styleData.styleguide.colorSections).forEach(function(palette) {
+    if (palette.colors) {
+      if (palette.colors.length) {
+        if (firstPalette) {
+          firstPalette = false;
+        } else {
+          menu.addItem(NSMenuItem.separatorItem());
+        }
+
+        addMenuItem(nib, menu, palette.name || 'Untitled Palette');
+        palette.colors.forEach(function(color) {
+          const swatch = swatchImageWithColor(NSColorFromString(color.value), swatchSize);
+          const menuItem = addMenuItem(nib, menu, color.name || 'Untitled Color', actionMaker(color._id), swatch, 1);
+          if (color._id == selectedColorID) {
+            menuItem.setState(NSOnState);
+          }
+        });
+      }
+    }
+  });
+  return menu;
+}
+
+function swatchImageWithColor(color, size) {
+  const image = NSImage.alloc().initWithSize(size);
+  const rect = NSMakeRect(0, 0, size.width, size.height);
+  const strokeRect = NSMakeRect(0.5, 0.5, size.width - 1, size.height - 1);
+  const borderColor = NSColor.blackColor().colorWithAlphaComponent(0.33);
+
+  image.lockFocus();
+
+  color.drawSwatchInRect(rect);
+  borderColor.set();
+  NSBezierPath.strokeRect(strokeRect);
+
+  image.unlockFocus();
+
+  return image;
+}
+
+function pagesSettingsMenu(nib, menu, payload){
+  //we already know there are organization at this points
+  payload.organizations.forEach(function(organization) {
+
+    var orgMenuItem = addMenuItem(nib, menu, organization.name, function(){
+      postWebUIEvent('onPagesOrganizationChanged', { organizationId: organization._id, organizationName: organization.kebabName});
+    });
+
+    if (organization._id == payload.organizationId){
+      orgMenuItem.setState(NSOnState);
+    }
+  });
+  menu.addItem(NSMenuItem.separatorItem());
+}
+
+function styleguideSettingsMenu(context, nib, menu, payload){
+
+  //we already know there are organization at this points
+  payload.organizations.forEach(function(organization){
+
+    addMenuItem(nib, menu, organization.name)
+      .setEnabled(false);
+
+    // iterate through styleguides
+    const styleguides = organization.styleguides;
+    const selectedStyleguideId = payload.styleguideId;
+
+    if (styleguides && styleguides.length > 0){
+      styleguides.forEach(function(styleguide) {
+        var styleguideMenuItem = addMenuItem(nib, menu, styleguide.name, function(){
+          postWebUIEvent('onStyleguideChanged', { organizationId: organization._id, styleguideId: styleguide._id, latestSnapshot: true });
+        }, null, 1);
+
+        //if it is the selected styleguide
+        if (styleguide._id == selectedStyleguideId) {
+
+          styleguideMenuItem.setState(NSOnState); //mark styleguide as selected
+
+          //if versions exist for the styleguide add submenu with their list
+          if (payload.snapshots && payload.snapshots.length > 0){
+
+            var releasesMenu = NSMenu.new();
+            var workingCopyItem = addMenuItem(nib, releasesMenu, 'Shared Draft', function(){
+              postWebUIEvent('onStyleguideChanged', { organizationId: organization._id, styleguideId: selectedStyleguideId});
+            });
+            if (!payload.snapshotId){
+              workingCopyItem.setState(NSOnState); //mark working copy as selected
+            }
+            payload.snapshots.forEach(function(snapshot) {
+              var releaseMenuItem = addMenuItem(nib, releasesMenu, snapshot.name, function() {
+                postWebUIEvent('onStyleguideChanged', { organizationId: organization._id, styleguideId: selectedStyleguideId, snapshotId: snapshot._id});
+              });
+              if (snapshot._id == payload.snapshotId){
+                releaseMenuItem.setState(NSOnState); //mark release as selected
+              }
+            });
+            styleguideMenuItem.setSubmenu(releasesMenu);
+          }
+        }
+      });
+    }
+
+    menu.addItem(NSMenuItem.separatorItem());
+  });
+
+  if (!payload.readOnly && payload.styleguideId){
+    someStlyeguideActionItem = addMenuItem(nib, menu, 'Manage Symbols…', function() {
+      manageSymbolsApp(context, nib);
+    });
+  }
+
+  var someStlyeguideActionItem;
+  if (!payload.readOnly && payload.styleguideId){
+    someStlyeguideActionItem = addMenuItem(nib, menu, 'Release a Version…', function() {
+      [(nib.mainWindow) beginSheet:(nib.createVersionSheet) completionHandler:null];
+    });
+  }
+
+  if (payload.snapshots && payload.snapshots.length > 0){
+    someStlyeguideActionItem = addMenuItem(nib, menu, 'Version History…', function() {
+      postWebUIEvent('onViewStyleguideReleasesPage');
+    });
+  }
+
+  if (someStlyeguideActionItem){
+    menu.addItem(NSMenuItem.separatorItem());
+  }
+}
+
+
+/// externally used functions
+
+/*
+ Genral menu that allow to define renam or delete action or action with a callback
+ */
+var genericContextMenu = function(payload, nib) {
+
+  const menuItems = payload.menuItems;
+
+  if (menuItems && menuItems.length > 0){
+    const menu = NSMenu.new();
+    for (var i = 0; i < menuItems.length; i++){
+      const menuItem = menuItems[i];
+      switch (menuItem.key){
+        case 'rename':
+          addMenuItem(nib, menu, menuItem.value, function() {
+            postWebUIEvent('onBeginEditItem', payload);
+          });
+          break;
+        case 'delete':
+          addMenuItem(nib, menu, menuItem.value, function() {
+            postWebUIEvent('onDeleteItem', payload);
+          });
+          break;
+        default:
+          if (menuItem.callbackFunction) {
+            addMenuItem(nib, menu, menuItem.value, function() {
+              postWebUIEvent(menuItem.callbackFunction, payload);
+            });
+          } else {
+            debug('probable mistake in menu item key: ' + menuItem)
+          }
+
+      }
+    }
+    popUpContextMenuInWebView(menu, nib.mainWebView, payload);
+  }
+};
+
+
+/*
+  Type style items context menu
+ */
+var typeStyleContextMenu = function(payload, nib) {
+  const menu = NSMenu.new();
+
+  addMenuItem(nib, menu, 'Delete', function() {
+    postWebUIEvent('onDeleteItem', payload);
+  });
+
+  addMenuItem(nib, menu, 'Set Text Color')
+    .setSubmenu(colorPaletteMenu(nib, payload.element.textColorID, function(colorID) {
+        return function() {
+          postWebUIEvent('onUpdateItem', {
+            type: payload.type,
+            elementID: payload.elementID,
+            data: { textColor: colorID }
+          });
+        };
+      })
+    );
+  popUpContextMenuInWebView(menu, nib.mainWebView, payload);
+};
+
+/*
+ the main application menu presenting the organization navigation for styleguides and pages plus more general action
+ */
+var applicationSettingsMenu = function(payload, context, nib, signoutCallback){
+  if (payload.idToken) {
+    //create new menu and allow disabling items
+    var menu = NSMenu.new();
+    menu.setAutoenablesItems(false);
+
+    if (payload.organizations && payload.organizations.length > 0) {
+      //iterate through organizations
+
+      if (isPagesApp(payload.currentApp)){
+        pagesSettingsMenu(nib, menu, payload);
+      } else {
+        styleguideSettingsMenu(context, nib, menu, payload);
+      }
+
+      //todo: do we want to limit only for users with editing permissions?
+      //if there are organizations we want to add link to add users to them
+      addMenuItem(nib, menu, 'Add Team Member...', function() {
+        postWebUIEvent('onAddNewMemberInBrowser');
+      });
+
+      //if the user signed in there will be an external link to manage user profile
+      addMenuItem(nib, menu, 'Manage Profile...', function() {
+        postWebUIEvent('onManageProfileInBrowser'); //todo: what id there are no user details
+      });
+    }
+
+    addMenuItem(nib, menu, 'Sign Out', function() {
+      signoutCallback();
+      postWebUIEvent('onUserSignedOut');
+    });
+
+    //add version info
+    menu.addItem(NSMenuItem.separatorItem());
+    addMenuItem(nib, menu, 'Version: ' + VERSION).setEnabled(false);
+
+    //after every other menu action succeeded we will remove the settings icon from the old menu and put ut as the first item in the new one
+    var origMenu = (nib.openSettingsMenu.menu());
+    var defaultItem = origMenu.itemAtIndex(0);
+    origMenu.removeItemAtIndex(0);
+    [menu insertItem:defaultItem atIndex:0];
+
+    //replace the menus
+    [(nib.openSettingsMenu) setMenu: menu];
+
+  }
+}
+
+/*
+  I am not sure yet from the correct name as there is only one action, but we can always rename it
+
+  Currently the whole menu is visible only in styleguide app, if will be needed for pages we need
+  to stop hiding it for pageapp view
+*/
+var moreActionsMenu = function(context, nib){
+
+  //create new menu and allow disabling items
+  var menu = NSMenu.new();
+  menu.setAutoenablesItems(false);
+
+  addMenuItem(nib, menu, 'Selective Sync', function() {
+    selectiveSyncApp(context, nib);
+  });
+
+  //after every other menu action succeeded we will remove the settings icon from the old menu and put ut as the first item in the new one
+  var origMenu = (nib.moreActionsMenu.menu());
+  var defaultItem = origMenu.itemAtIndex(0);
+  origMenu.removeItemAtIndex(0);
+  [menu insertItem:defaultItem atIndex:0];
+
+
+  //replace the menus
+  [(nib.moreActionsMenu) setMenu: menu];
+};

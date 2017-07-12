@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
+  <channel>
+    <title>Logodrop by Iconscout</title>
+    <link>https://raw.githubusercontent.com/Iconscout/logodrop/master/Logodrop.sketchplugin/Contents/Sketch/appcast.xml</link>
+    <description>Get all brand logos right into Sketch App</description>
+    <language>en</language>
+    <item>
+      <title>1.0.0</title>
+      <description>
+        <![CDATA[
+          <ul>
+            <li>First release of Logodrop by Iconscout</li>
+          </ul>
+        ]]>
+      </description>
+      <pubDate>Mon, 9 July 2017 12:10:42 +0000</pubDate>
+      <enclosure url="https://github.com/Iconscout/logodrop/releases/download/1.0.0/Logodrop.sketchplugin.zip" type="application/octet-stream" sparkle:version="1.0"/>
+    </item>
+  </channel>
+</rss>
