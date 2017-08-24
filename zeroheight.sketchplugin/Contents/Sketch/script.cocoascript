@@ -29,6 +29,19 @@ var onOpenDocument = function(context) {
 var onSelectionChanged = function(context) { //for later
 }
 
+var onSaveDocument = function(context) {
+    if(context.actionContext.autosaved == 0){
+        if (loadFrameworks(context)) {
+            var instance = [ZeroheightSketch sharedInstance];
+            var args = {
+                messageType:'EVENT.'+context.action,
+                fileURL:String(context.actionContext.document.fileURL().absoluteString())
+            };
+            [instance sendEvent:context.actionContext.document details:JSON.stringify(args)];
+        }
+    }
+}
+
 // COMMANDS
 
 var toggleZeroheight = function(context) {

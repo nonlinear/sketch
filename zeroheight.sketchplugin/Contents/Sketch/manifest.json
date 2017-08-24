@@ -14,7 +14,8 @@
         "actions" : {
           "Startup" : "onStartup",
           "OpenDocument":"onOpenDocument",
-          "SelectionChanged.finish" : "onSelectionChanged"
+          "SelectionChanged.finish" : "onSelectionChanged",
+          "DocumentSaved":"onSaveDocument"
         }
       }
     }
@@ -28,7 +29,7 @@
     ]
   },
   "identifier" : "com.zeroheight.sketch",
-  "version" : "1.5.4",
+  "version" : "1.5.5",
   "appcast" : "https://api.sketchpacks.com/v1/plugins/com.zeroheight.sketch/appcast",
   "description" : "organise and share your design libraries in Sketch and web",
   "authorEmail" : "support@zeroheight.com",
